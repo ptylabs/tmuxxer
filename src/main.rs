@@ -1,9 +1,12 @@
+mod bashrc;
 mod config;
 mod deps;
 mod fzf;
+mod install;
 mod sessionizer;
 mod setup;
 mod tmux;
+mod tmux_conf;
 
 use std::env;
 use std::io;

@@ -1,7 +1,9 @@
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
+use crate::bashrc;
 use crate::config;
+use crate::tmux_conf;
 
 const PRESET_SUFFIXES: &[&str] = &["code", "work", "projects", "personal", "dev"];
 
@@ -47,6 +49,30 @@ pub fn run() -> io::Result<()> {
         println!("  {}", display_path(&home, p));
     }
     println!();
+
+    let tmux_added = if prompt_yes_no("Add Ctrl+F binding for tmux?", true)? {
+        tmux_conf::install_ctrl_f_binding()?;
+        println!("Added");
+        true
+    } else {
+        println!("Not added");
+        false
+    };
+
+    if prompt_yes_no("Add Ctrl+F binding for bash? (outside tmux only)", false)? {
+        bashrc::install_ctrl_f_binding()?;
+        println!("Added");
+    } else {
+        println!("Not added");
+    }
+
+    if tmux_added {
+        let conf = tmux_conf::active_config_path();
+        println!(
+            "Reload tmux so Ctrl+F runs tmuxxer: tmux source-file {}",
+            conf.display()
+        );
+    }
 
     Ok(())
 }

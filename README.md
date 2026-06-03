@@ -48,6 +48,28 @@ On the first invocation (no config file yet), tmuxxer runs a short CLI setup:
 
 Run `tmuxxer init` anytime to redo this and overwrite the config.
 
+At the end of setup you can opt in to **Ctrl+F** bindings:
+
+**tmux** (default yes) — written to the config file tmux actually loads (`$TMUX_CONF`, else `$XDG_CONFIG_HOME/tmux/tmux.conf`, else `~/.tmux.conf`):
+
+```tmux
+# >>> tmuxxer >>>
+bind-key -n C-f run-shell -b "/path/to/tmuxxer"
+# <<< tmuxxer <<<
+```
+
+Reload: `tmux source-file <that file>`
+
+**bash** (default no) — `~/.bashrc` sources `~/.config/tmuxxer/bash-bind.sh`:
+
+```bash
+# >>> tmuxxer >>>
+bind -x '"\C-f": "tmuxxer"'
+# <<< tmuxxer <<<
+```
+
+Re-running `tmuxxer init` and accepting the prompt updates that block in place (no duplicates).
+
 ### Session picker
 
 - `[session] name` — attach or switch to an existing tmux session
@@ -90,6 +112,7 @@ src/
   deps.rs         tmux/fzf presence check
   config.rs       Config load / save
   setup.rs        First-run CLI prompts
+  bashrc.rs       Optional Ctrl+F bashrc block
   fzf.rs          fzf integration
   tmux.rs         tmux command wrappers
   sessionizer.rs  Collect, pick, create/attach

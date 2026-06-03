@@ -1,3 +1,4 @@
+use std::env;
 use std::io::Write;
 use std::process::{Command, Output, Stdio};
 
@@ -16,8 +17,13 @@ pub fn pick(items: &[String]) -> Option<String> {
 }
 
 fn run_fzf(items: &[String], extra_args: &[&str]) -> Option<Output> {
+    let mut args: Vec<&str> = extra_args.to_vec();
+    if env::var_os("TMUX").is_some() {
+        args.insert(0, "--tmux");
+    }
+
     let mut cmd = Command::new("fzf");
-    cmd.args(extra_args)
+    cmd.args(&args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit());
