@@ -1,0 +1,9 @@
+[package]
+name = "tmuxxer"
+version = "0.1.0"
+edition = "2021"
+description = "Tmux power tools — sessionizer with fzf"
+
+[[bin]]
+name = "tmuxxer"
+path = "src/main.rs"
