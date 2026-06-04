@@ -2,7 +2,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use crate::bashrc;
-use crate::config;
+use crate::config::{self, SearchRoot};
 use crate::tmux_conf;
 
 const PRESET_SUFFIXES: &[&str] = &["code", "work", "projects", "personal", "dev"];
@@ -12,9 +12,13 @@ pub fn run() -> io::Result<()> {
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "HOME not set"))?;
 
     println!("tmuxxer setup");
-    println!("Choose the folders to search for projects. ~ is always included.\n");
+    println!("Choose the folders to search for projects.\n");
 
-    let mut paths = vec![home.clone()];
+    let mut paths = Vec::new();
+
+    if prompt_yes_no("Add ~?", false)? {
+        push_unique(&mut paths, home.clone());
+    }
 
     // Offer detected common folders with a simple yes/no.
     for suffix in PRESET_SUFFIXES {
@@ -40,13 +44,40 @@ pub fn run() -> io::Result<()> {
         }
     }
 
-    let depth = prompt_depth(1)?;
+    if paths.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "no search paths selected",
+        ));
+    }
 
-    config::save(&paths, depth)?;
+    println!("\nChoose scan depth for each path.");
+    let mut roots = Vec::new();
+    for path in paths {
+        let label = display_path(&home, &path);
+        let depth = prompt_depth(&format!("Scan depth for {label}"), 1)?;
+        roots.push(SearchRoot { path, depth });
+    }
 
-    println!("\nSaved {} path(s) to {}", paths.len(), config::config_path().display());
-    for p in &paths {
-        println!("  {}", display_path(&home, p));
+    let ignores = config::Config::load()
+        .map(|config| config.ignores)
+        .unwrap_or_default();
+    config::save(&roots, &ignores)?;
+
+    println!(
+        "\nSaved {} path(s) to {}",
+        roots.len(),
+        config::config_path().display()
+    );
+    for root in &roots {
+        println!(
+            "  {} (depth {})",
+            display_path(&home, &root.path),
+            root.depth
+        );
+    }
+    if !ignores.is_empty() {
+        println!("Preserved {} ignore(s)", ignores.len());
     }
     println!();
 
@@ -59,7 +90,7 @@ pub fn run() -> io::Result<()> {
         false
     };
 
-    if prompt_yes_no("Add Ctrl+F binding for bash? (outside tmux only)", false)? {
+    if prompt_yes_no("Add Ctrl+F binding for bash? (outside tmux only)", true)? {
         bashrc::install_ctrl_f_binding()?;
         println!("Added");
     } else {
@@ -74,6 +105,55 @@ pub fn run() -> io::Result<()> {
         );
     }
 
+    Ok(())
+}
+
+pub fn run_ignore() -> io::Result<()> {
+    let mut config = config::Config::load().map_err(|e| {
+        if e.kind() == io::ErrorKind::NotFound {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "config not found; run tmuxxer init first",
+            )
+        } else {
+            e
+        }
+    })?;
+
+    println!("tmuxxer ignore");
+    if config.ignores.is_empty() {
+        println!("No ignores configured.");
+    } else {
+        println!("Current ignores:");
+        for ignore in &config.ignores {
+            println!("  {ignore}");
+        }
+    }
+
+    println!("\nAdd ignore patterns or paths. Press Enter on an empty line to finish.");
+    let mut added = 0usize;
+    loop {
+        let line = prompt("  ignore> ")?;
+        let line = line.trim();
+        if line.is_empty() {
+            break;
+        }
+        if config.ignores.iter().any(|ignore| ignore == line) {
+            println!("  skipped (already ignored): {line}");
+        } else {
+            config.ignores.push(line.to_string());
+            added += 1;
+        }
+    }
+
+    if added > 0 {
+        config::save(&config.roots, &config.ignores)?;
+    }
+
+    println!(
+        "\nSaved {added} new ignore(s) to {}",
+        config::config_path().display()
+    );
     Ok(())
 }
 
@@ -99,8 +179,8 @@ fn prompt_yes_no(question: &str, default_yes: bool) -> io::Result<bool> {
     Ok(matches!(answer.as_str(), "y" | "yes"))
 }
 
-fn prompt_depth(default: usize) -> io::Result<usize> {
-    let answer = prompt(&format!("\nScan depth under each path [{default}]: "))?;
+fn prompt_depth(question: &str, default: usize) -> io::Result<usize> {
+    let answer = prompt(&format!("{question} [{default}]: "))?;
     let answer = answer.trim();
     if answer.is_empty() {
         return Ok(default);

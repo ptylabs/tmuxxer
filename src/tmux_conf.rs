@@ -37,10 +37,7 @@ pub fn install_ctrl_f_binding() -> io::Result<()> {
     let path = active_config_path();
     let tmuxxer = install::resolve_tmuxxer()?;
 
-    let bind_line = format!(
-        "bind-key -n C-f run-shell -b \"{}\"",
-        tmuxxer.display()
-    );
+    let bind_line = format!("bind-key -n C-f run-shell -b \"{}\"", tmuxxer.display());
     let block = format!("{MARKER_START}\n{bind_line}\n{MARKER_END}\n");
 
     let mut content = if path.exists() {

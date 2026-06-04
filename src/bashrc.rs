@@ -9,9 +9,8 @@ const MARKER_START: &str = "# >>> tmuxxer >>>";
 const MARKER_END: &str = "# <<< tmuxxer <<<";
 
 pub fn install_ctrl_f_binding() -> io::Result<()> {
-    let home = config::home_dir().ok_or_else(|| {
-        io::Error::new(io::ErrorKind::NotFound, "HOME not set")
-    })?;
+    let home = config::home_dir()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "HOME not set"))?;
     let bashrc = home.join(".bashrc");
     let bind_script = bind_script_path();
 
@@ -28,9 +27,7 @@ pub fn install_ctrl_f_binding() -> io::Result<()> {
     fs::write(&bind_script, bind_script_body)?;
 
     let bind_script_s = bind_script.display();
-    let source_line = format!(
-        "[[ -f \"{bind_script_s}\" ]] && source \"{bind_script_s}\""
-    );
+    let source_line = format!("[[ -f \"{bind_script_s}\" ]] && source \"{bind_script_s}\"");
     let block = format!("{MARKER_START}\n{source_line}\n{MARKER_END}\n");
 
     let mut content = if bashrc.exists() {

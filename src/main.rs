@@ -18,6 +18,7 @@ fn main() {
         [] => run_sessionize(),
         [cmd] if cmd == "sessionize" || cmd == "s" => run_sessionize(),
         [cmd] if cmd == "init" => run_init(),
+        [cmd] if cmd == "--ignore" => run_ignore(),
         [cmd] if cmd == "--help" || cmd == "-h" => {
             print_help();
             Ok(())
@@ -56,6 +57,10 @@ fn run_init() -> io::Result<()> {
     setup::run()
 }
 
+fn run_ignore() -> io::Result<()> {
+    setup::run_ignore()
+}
+
 fn print_help() {
     println!(
         "tmuxxer — tmux sessionizer\n\
@@ -64,12 +69,14 @@ fn print_help() {
            tmuxxer              Pick a folder or session (fzf)\n\
            tmuxxer sessionize   Same as default\n\
            tmuxxer init         Re-run setup and rewrite config\n\
+           tmuxxer --ignore     Add ignored paths or patterns\n\
          \n\
          First run: interactive setup writes config paths, then opens the picker.\n\
          Requires tmux and fzf on PATH.\n\
          \n\
          Config: ~/.config/tmuxxer/config (or $XDG_CONFIG_HOME/tmuxxer/config)\n\
            path = ~/code    Search root (repeatable)\n\
-           depth = 1        Directory scan depth under each root"
+           depth = 1        Scan depth for the preceding path\n\
+           ignore = target  Ignored path or component pattern"
     );
 }
