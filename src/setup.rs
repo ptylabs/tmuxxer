@@ -109,6 +109,7 @@ pub fn run_ignore() -> io::Result<()> {
     }
 
     println!("\nAdd ignore patterns or paths. Press Enter on an empty line to finish.");
+    println!("Examples: target, .*, node_modules/*, ~/work/tmp");
     let mut added = 0usize;
     loop {
         let line = prompt("  ignore> ")?;
