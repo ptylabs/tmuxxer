@@ -106,7 +106,11 @@ struct IgnoreRule {
 #[derive(Debug, Clone)]
 enum IgnoreKind {
     Component,
-    Path { pattern: PathBuf, absolute: bool },
+    Path {
+        pattern: PathBuf,
+        absolute: bool,
+        anchored_to_root: bool,
+    },
 }
 
 impl IgnoreRule {
@@ -116,6 +120,7 @@ impl IgnoreRule {
         let kind = if is_path {
             IgnoreKind::Path {
                 absolute: raw.starts_with('/') || raw.starts_with('~'),
+                anchored_to_root: raw.starts_with('/'),
                 pattern: expand_ignore_path(&raw),
             }
         } else {
@@ -133,12 +138,16 @@ impl IgnoreRule {
                 let component = component.to_string_lossy();
                 wildcard_match(&self.raw, &component)
             }),
-            IgnoreKind::Path { pattern, absolute } => {
+            IgnoreKind::Path {
+                pattern,
+                absolute,
+                anchored_to_root,
+            } => {
                 if *absolute {
                     path_prefix_matches(path, pattern)
                 } else {
                     path.strip_prefix(root)
-                        .map(|relative| path_prefix_matches(relative, pattern))
+                        .map(|relative| relative_path_matches(relative, pattern, *anchored_to_root))
                         .unwrap_or(false)
                 }
             }
@@ -163,20 +172,69 @@ fn expand_ignore_path(raw: &str) -> PathBuf {
 }
 
 fn path_prefix_matches(path: &Path, pattern: &Path) -> bool {
-    let pattern_s = pattern.to_string_lossy();
+    let path_s = normalize_path(path);
+    let pattern_s = normalize_path(pattern);
     if !pattern_s.contains('*') {
-        return path.starts_with(pattern);
+        return path_s == pattern_s
+            || path_s
+                .strip_prefix(&pattern_s)
+                .is_some_and(|rest| rest.starts_with('/'));
     }
 
-    let mut current = Some(path);
-    while let Some(candidate) = current {
-        let candidate_s = candidate.to_string_lossy();
-        if wildcard_match(&pattern_s, &candidate_s) {
+    for candidate in path_prefix_candidates(&path_s) {
+        if wildcard_match(&pattern_s, candidate) {
             return true;
         }
-        current = candidate.parent();
     }
     false
+}
+
+fn relative_path_matches(path: &Path, pattern: &Path, anchored_to_root: bool) -> bool {
+    if anchored_to_root {
+        return path_prefix_matches(path, pattern);
+    }
+
+    let relative = normalize_path(path);
+    for candidate in path_suffix_candidates(&relative) {
+        if path_prefix_matches(Path::new(candidate), pattern) {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn normalize_path(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+fn path_prefix_candidates(path: &str) -> Vec<&str> {
+    let mut candidates = Vec::new();
+    let mut end = path.len();
+    loop {
+        let candidate = &path[..end];
+        if !candidate.is_empty() {
+            candidates.push(candidate);
+        }
+        match candidate.rfind('/') {
+            Some(index) => end = index,
+            None => break,
+        }
+    }
+    candidates
+}
+
+fn path_suffix_candidates(path: &str) -> Vec<&str> {
+    let mut candidates = Vec::new();
+    if !path.is_empty() {
+        candidates.push(path);
+    }
+    for (index, ch) in path.char_indices() {
+        if ch == '/' && index + 1 < path.len() {
+            candidates.push(&path[index + 1..]);
+        }
+    }
+    candidates
 }
 
 fn wildcard_match(pattern: &str, text: &str) -> bool {
@@ -286,6 +344,28 @@ mod tests {
 
         assert!(is_ignored(&root, &ignored, &rules));
         assert!(!is_ignored(&root, &allowed, &rules));
+    }
+
+    #[test]
+    fn ignore_relative_path_pattern_matches_at_any_depth() {
+        let rules = ignore_rules(&["node_modules/*"]);
+        let root = Path::new("/tmp/work");
+
+        assert!(is_ignored(
+            root,
+            Path::new("/tmp/work/app/node_modules/typescript"),
+            &rules
+        ));
+        assert!(is_ignored(
+            root,
+            Path::new("/tmp/work/node_modules/esbuild"),
+            &rules
+        ));
+        assert!(!is_ignored(
+            root,
+            Path::new("/tmp/work/app/src/node_modulesx/typescript"),
+            &rules
+        ));
     }
 
     fn ignore_rules(patterns: &[&str]) -> Vec<IgnoreRule> {

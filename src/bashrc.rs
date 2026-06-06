@@ -59,6 +59,16 @@ fi\n\
     )
 }
 
+pub fn has_ctrl_f_binding() -> io::Result<bool> {
+    let home = config::home_dir()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "HOME not set"))?;
+    let bashrc = home.join(".bashrc");
+    if !bashrc.exists() {
+        return Ok(false);
+    }
+    Ok(find_block_span(&fs::read_to_string(bashrc)?).is_some())
+}
+
 fn bind_script_path() -> PathBuf {
     config::config_path()
         .parent()

@@ -137,6 +137,14 @@ fn fzf_tmux_disabled_command(command: &str) -> String {
     format!("TMUXXER_FZF_TMUX=0; export TMUXXER_FZF_TMUX; {command}")
 }
 
+pub fn has_ctrl_f_binding() -> io::Result<bool> {
+    let path = active_config_path();
+    if !path.exists() {
+        return Ok(false);
+    }
+    Ok(find_block_span(&fs::read_to_string(path)?).is_some())
+}
+
 fn find_block_span(content: &str) -> Option<(usize, usize)> {
     let start = content.find(MARKER_START)?;
     let rest = &content[start..];

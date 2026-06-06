@@ -30,6 +30,7 @@ cargo run
 tmuxxer              # setup on first run, then fzf picker
 tmuxxer sessionize   # same
 tmuxxer init         # re-run setup and overwrite config
+tmuxxer user-config  # re-run tmux/bash integration setup
 tmuxxer --ignore     # append ignored paths or patterns
 tmuxxer --help
 ```
@@ -48,6 +49,7 @@ On the first invocation (no config file yet), tmuxxer runs a short CLI setup:
 4. **Session picker** — opens the fzf picker for normal use.
 
 Run `tmuxxer init` anytime to redo this and overwrite the config.
+Run `tmuxxer user-config` anytime to reconfigure the tmux/bash bindings. If a tmuxxer block is already present, it is updated in place instead of duplicated.
 
 At the end of setup you can opt in to **Ctrl+F** bindings:
 
@@ -82,6 +84,7 @@ bind -x '"\C-f": "tmuxxer sessionize"'
 ```
 
 Re-running `tmuxxer init` and accepting the prompt updates that block in place (no duplicates).
+`tmuxxer user-config` does the same without touching the project search paths.
 
 After writing the Bash binding, new interactive Bash shells pick it up automatically. The current shell cannot be modified by `tmuxxer init`; run `source ~/.bashrc` there if you want Ctrl+F without opening a new shell.
 
@@ -95,12 +98,15 @@ Examples:
 ignore = target
 ignore = .git
 ignore = .*
+ignore = node_modules/*
 ignore = ~/work/tmp
 ```
 
-- Patterns without `/` match any path component.
-- Patterns with `/`, absolute paths, and `~` paths match path prefixes.
-- `*` is supported as a wildcard.
+Matching rules:
+
+- no slash: matches any path component, with `*` supported, e.g. `.*`, `target`
+- slash without leading `/`: matches relative paths anywhere below each search root, e.g. `node_modules/*`
+- leading `~/` or `/`: matches from that absolute path prefix
 
 ### Session picker
 
@@ -137,7 +143,7 @@ ignore = target
 
 - `path` — search root (repeatable)
 - `depth` — how deep to scan under the preceding path (1 = immediate children only)
-- `ignore` — path or component pattern to skip while scanning
+- `ignore` — path or component pattern to skip while scanning, with simple gitignore-like `*` matching
 
 Edit the file by hand anytime; use `tmuxxer init` to reconfigure paths interactively. Existing `ignore` entries are preserved when setup rewrites roots.
 

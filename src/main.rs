@@ -18,6 +18,7 @@ fn main() {
         [] => run_sessionize(),
         [cmd] if cmd == "sessionize" || cmd == "s" => run_sessionize(),
         [cmd] if cmd == "init" => run_init(),
+        [cmd] if cmd == "user-config" => run_user_config(),
         [cmd] if cmd == "--ignore" => run_ignore(),
         [cmd] if cmd == "--help" || cmd == "-h" => {
             print_help();
@@ -61,15 +62,21 @@ fn run_ignore() -> io::Result<()> {
     setup::run_ignore()
 }
 
+fn run_user_config() -> io::Result<()> {
+    ensure_tools_or_exit();
+    setup::run_user_config_setup()
+}
+
 fn print_help() {
     println!(
         "tmuxxer — tmux sessionizer\n\
          \n\
          Usage:\n\
-           tmuxxer              Pick a folder or session (fzf)\n\
-           tmuxxer sessionize   Same as default\n\
-           tmuxxer init         Re-run setup and rewrite config\n\
-           tmuxxer --ignore     Add ignored paths or patterns\n\
+          tmuxxer              Pick a folder or session (fzf)\n\
+          tmuxxer sessionize   Same as default\n\
+          tmuxxer init         Re-run setup and rewrite config\n\
+          tmuxxer user-config  Reconfigure tmux/bash user bindings\n\
+          tmuxxer --ignore     Add ignored paths or patterns\n\
          \n\
          First run: interactive setup writes config paths, then opens the picker.\n\
          Requires tmux and fzf on PATH.\n\
