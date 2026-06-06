@@ -30,6 +30,7 @@ cargo run
 tmuxxer              # setup on first run, then fzf picker
 tmuxxer sessionize   # same
 tmuxxer init         # re-run setup and overwrite config
+tmuxxer user-config  # re-run tmux/bash integration setup
 tmuxxer --ignore     # append ignored paths or patterns
 tmuxxer --help
 ```
@@ -48,6 +49,7 @@ On the first invocation (no config file yet), tmuxxer runs a short CLI setup:
 4. **Session picker** — opens the fzf picker for normal use.
 
 Run `tmuxxer init` anytime to redo this and overwrite the config.
+Run `tmuxxer user-config` anytime to reconfigure the tmux/bash bindings. If a tmuxxer block is already present, it is updated in place instead of duplicated.
 
 At the end of setup you can opt in to **Ctrl+F** bindings:
 
@@ -70,6 +72,7 @@ bind -x '"\C-f": "tmuxxer"'
 ```
 
 Re-running `tmuxxer init` and accepting the prompt updates that block in place (no duplicates).
+`tmuxxer user-config` does the same without touching the project search paths.
 
 ### Ignoring paths
 
