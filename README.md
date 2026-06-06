@@ -51,25 +51,39 @@ Run `tmuxxer init` anytime to redo this and overwrite the config.
 
 At the end of setup you can opt in to **Ctrl+F** bindings:
 
-**tmux** (default yes) — written to the config file tmux actually loads (`$TMUX_CONF`, else `$XDG_CONFIG_HOME/tmux/tmux.conf`, else `~/.tmux.conf`):
+**tmux** (default yes) — written to the user tmux config file tmux is loading, or `~/.tmux.conf` if none exists yet:
 
 ```tmux
 # >>> tmuxxer >>>
-bind-key -n C-f run-shell -b "/path/to/tmuxxer"
+bind-key -n C-f display-popup -E -w 90% -h 80% -T tmuxxer "TMUXXER_FZF_TMUX=0; export TMUXXER_FZF_TMUX; if command -v tmuxxer >/dev/null 2>&1; then exec tmuxxer sessionize; fi; if [ -x '/path/to/tmuxxer' ]; then exec '/path/to/tmuxxer' sessionize; fi; exec tmuxxer sessionize"
 # <<< tmuxxer <<<
 ```
 
-Reload: `tmux source-file <that file>`
+On older tmux versions without `display-popup`, setup writes a `new-window` fallback instead. Both variants run tmuxxer in an interactive tmux surface; this is required for `fzf`.
 
-**bash** (default yes) — `~/.bashrc` sources `~/.config/tmuxxer/bash-bind.sh`:
+After writing the binding, setup asks whether to reload tmux immediately. If tmux is not running yet or reload fails, run `tmux source-file <that file>` after starting tmux.
+
+**bash** (default yes) — `~/.bashrc` sources the runtime config path:
 
 ```bash
 # >>> tmuxxer >>>
-bind -x '"\C-f": "tmuxxer"'
+if [[ $- == *i* ]]; then
+  _tmuxxer_bind="${XDG_CONFIG_HOME:-$HOME/.config}/tmuxxer/bash-bind.sh"
+  [[ -r "$_tmuxxer_bind" ]] && source "$_tmuxxer_bind"
+  unset _tmuxxer_bind
+fi
 # <<< tmuxxer <<<
 ```
 
+The sourced `bash-bind.sh` only binds interactive Bash shells outside tmux:
+
+```bash
+bind -x '"\C-f": "tmuxxer sessionize"'
+```
+
 Re-running `tmuxxer init` and accepting the prompt updates that block in place (no duplicates).
+
+After writing the Bash binding, new interactive Bash shells pick it up automatically. The current shell cannot be modified by `tmuxxer init`; run `source ~/.bashrc` there if you want Ctrl+F without opening a new shell.
 
 ### Ignoring paths
 

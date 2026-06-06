@@ -1,4 +1,5 @@
 use std::io;
+use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -17,4 +18,67 @@ pub fn resolve_tmuxxer() -> io::Result<PathBuf> {
         io::ErrorKind::NotFound,
         "tmuxxer not found on PATH — install with: cargo install --path .",
     ))
+}
+
+pub fn sessionize_shell_command(tmuxxer: &Path) -> String {
+    let tmuxxer = shell_quote(&tmuxxer.to_string_lossy());
+    format!(
+        "if command -v tmuxxer >/dev/null 2>&1; then exec tmuxxer sessionize; fi; \
+         if [ -x {tmuxxer} ]; then exec {tmuxxer} sessionize; fi; \
+         exec tmuxxer sessionize"
+    )
+}
+
+pub fn shell_quote(value: &str) -> String {
+    if value.is_empty() {
+        return "''".to_string();
+    }
+
+    let mut quoted = String::from("'");
+    for ch in value.chars() {
+        if ch == '\'' {
+            quoted.push_str("'\\''");
+        } else {
+            quoted.push(ch);
+        }
+    }
+    quoted.push('\'');
+    quoted
+}
+
+pub fn tmux_double_quote(value: &str) -> String {
+    let mut quoted = String::from("\"");
+    for ch in value.chars() {
+        match ch {
+            '\\' => quoted.push_str("\\\\"),
+            '"' => quoted.push_str("\\\""),
+            '\n' => quoted.push_str("\\n"),
+            _ => quoted.push(ch),
+        }
+    }
+    quoted.push('"');
+    quoted
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shell_quote_handles_single_quotes() {
+        assert_eq!(shell_quote("/tmp/it's/tmuxxer"), "'/tmp/it'\\''s/tmuxxer'");
+    }
+
+    #[test]
+    fn tmux_double_quote_escapes_special_chars() {
+        assert_eq!(tmux_double_quote("a \"b\" \\ c"), "\"a \\\"b\\\" \\\\ c\"");
+    }
+
+    #[test]
+    fn sessionize_command_uses_path_with_absolute_fallback() {
+        let command = sessionize_shell_command(Path::new("/opt/tmuxxer/bin/tmuxxer"));
+
+        assert!(command.contains("command -v tmuxxer"));
+        assert!(command.contains("'/opt/tmuxxer/bin/tmuxxer'"));
+    }
 }

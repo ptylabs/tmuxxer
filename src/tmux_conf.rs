@@ -1,7 +1,8 @@
 use std::env;
 use std::fs;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 use crate::config;
 use crate::install;
@@ -9,35 +10,36 @@ use crate::install;
 const MARKER_START: &str = "# >>> tmuxxer >>>";
 const MARKER_END: &str = "# <<< tmuxxer <<<";
 
-/// Config file tmux loads (same order as tmux: TMUX_CONF, then XDG, then ~/.tmux.conf).
+/// User config file tmux is loading, or a conservative default for new installs.
 pub fn active_config_path() -> PathBuf {
     if let Ok(path) = env::var("TMUX_CONF") {
         return PathBuf::from(path);
     }
-    if let Ok(xdg) = env::var("XDG_CONFIG_HOME") {
-        let path = PathBuf::from(xdg).join("tmux").join("tmux.conf");
-        if path.exists() {
-            return path;
-        }
+
+    if let Some(path) = loaded_user_config_path() {
+        return path;
     }
-    let xdg_default = config::home_dir()
-        .unwrap_or_else(|| PathBuf::from("/"))
-        .join(".config")
-        .join("tmux")
-        .join("tmux.conf");
-    if xdg_default.exists() {
-        return xdg_default;
+
+    let candidates = user_config_candidates();
+    if let Some(path) = candidates.iter().rev().find(|path| path.exists()) {
+        return path.clone();
     }
+
     config::home_dir()
         .unwrap_or_else(|| PathBuf::from("/"))
         .join(".tmux.conf")
 }
 
-pub fn install_ctrl_f_binding() -> io::Result<()> {
+pub fn install_ctrl_f_binding() -> io::Result<PathBuf> {
     let path = active_config_path();
     let tmuxxer = install::resolve_tmuxxer()?;
+    let command = install::sessionize_shell_command(&tmuxxer);
 
-    let bind_line = format!("bind-key -n C-f run-shell -b \"{}\"", tmuxxer.display());
+    let bind_line = if supports_display_popup() {
+        popup_bind_line(&command)
+    } else {
+        new_window_bind_line(&command)
+    };
     let block = format!("{MARKER_START}\n{bind_line}\n{MARKER_END}\n");
 
     let mut content = if path.exists() {
@@ -59,7 +61,80 @@ pub fn install_ctrl_f_binding() -> io::Result<()> {
     }
 
     fs::write(&path, content)?;
-    Ok(())
+    Ok(path)
+}
+
+pub fn reload_config(path: &Path) -> io::Result<()> {
+    let status = Command::new("tmux").arg("source-file").arg(path).status()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(io::Error::other(format!(
+            "tmux source-file failed for {}",
+            path.display()
+        )))
+    }
+}
+
+fn loaded_user_config_path() -> Option<PathBuf> {
+    let output = Command::new("tmux")
+        .args(["display-message", "-p", "#{config_files}"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .split(',')
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .rfind(|path| !path.starts_with("/etc") && path.is_file())
+}
+
+fn user_config_candidates() -> Vec<PathBuf> {
+    let home = config::home_dir().unwrap_or_else(|| PathBuf::from("/"));
+    let mut candidates = vec![home.join(".tmux.conf")];
+
+    if let Ok(xdg) = env::var("XDG_CONFIG_HOME") {
+        candidates.push(PathBuf::from(xdg).join("tmux").join("tmux.conf"));
+    } else {
+        candidates.push(home.join(".config").join("tmux").join("tmux.conf"));
+    }
+
+    candidates
+}
+
+fn supports_display_popup() -> bool {
+    Command::new("tmux")
+        .args(["list-commands", "display-popup"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+fn popup_bind_line(command: &str) -> String {
+    let command = fzf_tmux_disabled_command(command);
+    format!(
+        "bind-key -n C-f display-popup -E -w 90% -h 80% -T tmuxxer {}",
+        install::tmux_double_quote(&command)
+    )
+}
+
+fn new_window_bind_line(command: &str) -> String {
+    let command = fzf_tmux_disabled_command(command);
+    format!(
+        "bind-key -n C-f new-window -n tmuxxer {}",
+        install::tmux_double_quote(&command)
+    )
+}
+
+fn fzf_tmux_disabled_command(command: &str) -> String {
+    format!("TMUXXER_FZF_TMUX=0; export TMUXXER_FZF_TMUX; {command}")
 }
 
 fn find_block_span(content: &str) -> Option<(usize, usize)> {
@@ -73,4 +148,26 @@ fn find_block_span(content: &str) -> Option<(usize, usize)> {
         end
     };
     Some((start, end))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn popup_binding_uses_interactive_popup_not_run_shell() {
+        let line = popup_bind_line("exec tmuxxer sessionize");
+
+        assert!(line.contains("display-popup"));
+        assert!(line.contains("TMUXXER_FZF_TMUX=0"));
+        assert!(!line.contains("run-shell"));
+    }
+
+    #[test]
+    fn new_window_binding_disables_nested_fzf_tmux_popup() {
+        let line = new_window_bind_line("exec tmuxxer sessionize");
+
+        assert!(line.contains("new-window"));
+        assert!(line.contains("TMUXXER_FZF_TMUX=0"));
+    }
 }

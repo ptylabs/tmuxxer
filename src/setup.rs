@@ -81,8 +81,17 @@ pub fn run() -> io::Result<()> {
     }
     println!();
 
-    let tmux_added = if prompt_yes_no("Add Ctrl+F binding for tmux?", true)? {
-        tmux_conf::install_ctrl_f_binding()?;
+    let tmux_conf = if prompt_yes_no("Add Ctrl+F binding for tmux?", true)? {
+        let conf = tmux_conf::install_ctrl_f_binding()?;
+        println!("Added");
+        Some(conf)
+    } else {
+        println!("Not added");
+        None
+    };
+
+    let bash_added = if prompt_yes_no("Add Ctrl+F binding for bash? (outside tmux only)", true)? {
+        bashrc::install_ctrl_f_binding()?;
         println!("Added");
         true
     } else {
@@ -90,19 +99,23 @@ pub fn run() -> io::Result<()> {
         false
     };
 
-    if prompt_yes_no("Add Ctrl+F binding for bash? (outside tmux only)", true)? {
-        bashrc::install_ctrl_f_binding()?;
-        println!("Added");
-    } else {
-        println!("Not added");
+    if let Some(conf) = tmux_conf {
+        if prompt_yes_no("Reload tmux config now?", true)? {
+            match tmux_conf::reload_config(&conf) {
+                Ok(()) => println!("Reloaded tmux config"),
+                Err(e) => {
+                    println!("Could not reload tmux config now: {e}");
+                    println!("Run this manually: tmux source-file {}", conf.display());
+                }
+            }
+        } else {
+            println!("Reload tmux later: tmux source-file {}", conf.display());
+        }
     }
 
-    if tmux_added {
-        let conf = tmux_conf::active_config_path();
-        println!(
-            "Reload tmux so Ctrl+F runs tmuxxer: tmux source-file {}",
-            conf.display()
-        );
+    if bash_added {
+        println!("Bash Ctrl+F is active in new interactive shells.");
+        println!("For this shell, run: source ~/.bashrc");
     }
 
     Ok(())

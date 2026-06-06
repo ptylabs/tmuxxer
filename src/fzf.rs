@@ -18,7 +18,7 @@ pub fn pick(items: &[String]) -> Option<String> {
 
 fn run_fzf(items: &[String], extra_args: &[&str]) -> Option<Output> {
     let mut args: Vec<&str> = extra_args.to_vec();
-    if env::var_os("TMUX").is_some() {
+    if use_fzf_tmux_popup() {
         args.insert(0, "--tmux");
     }
 
@@ -36,4 +36,18 @@ fn run_fzf(items: &[String], extra_args: &[&str]) -> Option<Output> {
     }
 
     child.wait_with_output().ok()
+}
+
+fn use_fzf_tmux_popup() -> bool {
+    env::var_os("TMUX").is_some() && env_flag_enabled("TMUXXER_FZF_TMUX")
+}
+
+fn env_flag_enabled(name: &str) -> bool {
+    match env::var(name) {
+        Ok(value) => !matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "0" | "false" | "no" | "off"
+        ),
+        Err(_) => true,
+    }
 }
