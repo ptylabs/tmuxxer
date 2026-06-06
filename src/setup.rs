@@ -81,29 +81,7 @@ pub fn run() -> io::Result<()> {
     }
     println!();
 
-    let tmux_added = if prompt_yes_no("Add Ctrl+F binding for tmux?", true)? {
-        tmux_conf::install_ctrl_f_binding()?;
-        println!("Added");
-        true
-    } else {
-        println!("Not added");
-        false
-    };
-
-    if prompt_yes_no("Add Ctrl+F binding for bash? (outside tmux only)", true)? {
-        bashrc::install_ctrl_f_binding()?;
-        println!("Added");
-    } else {
-        println!("Not added");
-    }
-
-    if tmux_added {
-        let conf = tmux_conf::active_config_path();
-        println!(
-            "Reload tmux so Ctrl+F runs tmuxxer: tmux source-file {}",
-            conf.display()
-        );
-    }
+    run_user_config_setup()?;
 
     Ok(())
 }
@@ -154,6 +132,46 @@ pub fn run_ignore() -> io::Result<()> {
         "\nSaved {added} new ignore(s) to {}",
         config::config_path().display()
     );
+    Ok(())
+}
+
+pub fn run_user_config_setup() -> io::Result<()> {
+    println!("tmuxxer user-config");
+
+    let tmux_added = if prompt_yes_no("Add Ctrl+F binding for tmux?", true)? {
+        let already_configured = tmux_conf::has_ctrl_f_binding()?;
+        tmux_conf::install_ctrl_f_binding()?;
+        if already_configured {
+            println!("Already configured");
+        } else {
+            println!("Added");
+        }
+        true
+    } else {
+        println!("Not added");
+        false
+    };
+
+    if prompt_yes_no("Add Ctrl+F binding for bash? (outside tmux only)", true)? {
+        let already_configured = bashrc::has_ctrl_f_binding()?;
+        bashrc::install_ctrl_f_binding()?;
+        if already_configured {
+            println!("Already configured");
+        } else {
+            println!("Added");
+        }
+    } else {
+        println!("Not added");
+    }
+
+    if tmux_added {
+        let conf = tmux_conf::active_config_path();
+        println!(
+            "Reload tmux so Ctrl+F runs tmuxxer: tmux source-file {}",
+            conf.display()
+        );
+    }
+
     Ok(())
 }
 
