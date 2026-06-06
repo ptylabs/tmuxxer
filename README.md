@@ -84,8 +84,14 @@ Examples:
 ignore = target
 ignore = .git
 ignore = .*
+ignore = node_modules/*
 ignore = ~/work/tmp
 ```
+
+Matching rules:
+- no slash: matches any path component, with `*` supported, e.g. `.*`, `target`
+- slash without leading `/`: matches relative paths anywhere below each search root, e.g. `node_modules/*`
+- leading `~/` or `/`: matches from that absolute path prefix
 
 - Patterns without `/` match any path component.
 - Patterns with `/`, absolute paths, and `~` paths match path prefixes.
@@ -126,7 +132,7 @@ ignore = target
 
 - `path` — search root (repeatable)
 - `depth` — how deep to scan under the preceding path (1 = immediate children only)
-- `ignore` — path or component pattern to skip while scanning
+- `ignore` — path or component pattern to skip while scanning, with simple gitignore-like `*` matching
 
 Edit the file by hand anytime; use `tmuxxer init` to reconfigure paths interactively. Existing `ignore` entries are preserved when setup rewrites roots.
 
