@@ -58,11 +58,11 @@ At the end of setup you can opt in to **Ctrl+F** bindings:
 
 ```tmux
 # >>> tmuxxer >>>
-bind-key -n C-f display-popup -E -w 90% -h 80% -T tmuxxer "TMUXXER_FZF_TMUX=0; export TMUXXER_FZF_TMUX; if command -v tmuxxer >/dev/null 2>&1; then exec tmuxxer sessionize; fi; if [ -x '/path/to/tmuxxer' ]; then exec '/path/to/tmuxxer' sessionize; fi; exec tmuxxer sessionize"
+bind-key -n C-f send-keys C-u \; send-keys -l "'/path/to/tmuxxer' sessionize" \; send-keys Enter
 # <<< tmuxxer <<<
 ```
 
-On older tmux versions without `display-popup`, setup writes a `new-window` fallback instead. Both variants run tmuxxer in an interactive tmux surface; this is required for `fzf`.
+The tmux binding runs tmuxxer in the current pane so the picker uses the same compact `fzf` panel as it does from Bash. It is intended for shell prompts; if another full-screen program is active in the pane, tmux sends the keys to that program.
 
 After writing the binding, setup asks whether to reload tmux immediately. If tmux is not running yet or reload fails, run `tmux source-file <that file>` after starting tmux.
 
@@ -110,6 +110,8 @@ Matching rules:
 - leading `~/` or `/`: matches from that absolute path prefix
 
 ### Session picker
+
+The picker uses `fzf --height=80% --layout=reverse --border` both inside and outside tmux, so it appears as the same compact panel instead of switching between tmux popup and fullscreen modes.
 
 - `[session] name` — attach or switch to an existing tmux session
 - `[dir] label — /full/path` — create a session named from the folder basename (`.` → `_`) and attach

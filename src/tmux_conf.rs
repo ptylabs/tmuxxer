@@ -2,7 +2,7 @@ use std::env;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 
 use crate::config;
 use crate::install;
@@ -33,13 +33,11 @@ pub fn active_config_path() -> PathBuf {
 pub fn install_ctrl_f_binding() -> io::Result<PathBuf> {
     let path = active_config_path();
     let tmuxxer = install::resolve_tmuxxer()?;
-    let command = install::sessionize_shell_command(&tmuxxer);
-
-    let bind_line = if supports_display_popup() {
-        popup_bind_line(&command)
-    } else {
-        new_window_bind_line(&command)
-    };
+    let command = format!(
+        "{} sessionize",
+        install::shell_quote(&tmuxxer.to_string_lossy())
+    );
+    let bind_line = send_keys_bind_line(&command);
     let block = format!("{MARKER_START}\n{bind_line}\n{MARKER_END}\n");
 
     let mut content = if path.exists() {
@@ -107,34 +105,11 @@ fn user_config_candidates() -> Vec<PathBuf> {
     candidates
 }
 
-fn supports_display_popup() -> bool {
-    Command::new("tmux")
-        .args(["list-commands", "display-popup"])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
-}
-
-fn popup_bind_line(command: &str) -> String {
-    let command = fzf_tmux_disabled_command(command);
+fn send_keys_bind_line(command: &str) -> String {
     format!(
-        "bind-key -n C-f display-popup -E -w 90% -h 80% -T tmuxxer {}",
+        "bind-key -n C-f send-keys C-u \\; send-keys -l {} \\; send-keys Enter",
         install::tmux_double_quote(&command)
     )
-}
-
-fn new_window_bind_line(command: &str) -> String {
-    let command = fzf_tmux_disabled_command(command);
-    format!(
-        "bind-key -n C-f new-window -n tmuxxer {}",
-        install::tmux_double_quote(&command)
-    )
-}
-
-fn fzf_tmux_disabled_command(command: &str) -> String {
-    format!("TMUXXER_FZF_TMUX=0; export TMUXXER_FZF_TMUX; {command}")
 }
 
 pub fn has_ctrl_f_binding() -> io::Result<bool> {
@@ -163,19 +138,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn popup_binding_uses_interactive_popup_not_run_shell() {
-        let line = popup_bind_line("exec tmuxxer sessionize");
+    fn tmux_binding_runs_picker_in_current_pane() {
+        let line = send_keys_bind_line("tmuxxer sessionize");
 
-        assert!(line.contains("display-popup"));
-        assert!(line.contains("TMUXXER_FZF_TMUX=0"));
+        assert!(line.contains("send-keys C-u"));
+        assert!(line.contains("send-keys -l \"tmuxxer sessionize\""));
+        assert!(line.contains("send-keys Enter"));
+        assert!(!line.contains("display-popup"));
         assert!(!line.contains("run-shell"));
-    }
-
-    #[test]
-    fn new_window_binding_disables_nested_fzf_tmux_popup() {
-        let line = new_window_bind_line("exec tmuxxer sessionize");
-
-        assert!(line.contains("new-window"));
-        assert!(line.contains("TMUXXER_FZF_TMUX=0"));
     }
 }

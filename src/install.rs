@@ -1,5 +1,4 @@
 use std::io;
-use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -18,15 +17,6 @@ pub fn resolve_tmuxxer() -> io::Result<PathBuf> {
         io::ErrorKind::NotFound,
         "tmuxxer not found on PATH — install with: cargo install --path .",
     ))
-}
-
-pub fn sessionize_shell_command(tmuxxer: &Path) -> String {
-    let tmuxxer = shell_quote(&tmuxxer.to_string_lossy());
-    format!(
-        "if command -v tmuxxer >/dev/null 2>&1; then exec tmuxxer sessionize; fi; \
-         if [ -x {tmuxxer} ]; then exec {tmuxxer} sessionize; fi; \
-         exec tmuxxer sessionize"
-    )
 }
 
 pub fn shell_quote(value: &str) -> String {
@@ -72,13 +62,5 @@ mod tests {
     #[test]
     fn tmux_double_quote_escapes_special_chars() {
         assert_eq!(tmux_double_quote("a \"b\" \\ c"), "\"a \\\"b\\\" \\\\ c\"");
-    }
-
-    #[test]
-    fn sessionize_command_uses_path_with_absolute_fallback() {
-        let command = sessionize_shell_command(Path::new("/opt/tmuxxer/bin/tmuxxer"));
-
-        assert!(command.contains("command -v tmuxxer"));
-        assert!(command.contains("'/opt/tmuxxer/bin/tmuxxer'"));
     }
 }

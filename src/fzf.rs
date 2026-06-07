@@ -1,4 +1,3 @@
-use std::env;
 use std::io::Write;
 use std::process::{Command, Output, Stdio};
 
@@ -17,10 +16,8 @@ pub fn pick(items: &[String]) -> Option<String> {
 }
 
 fn run_fzf(items: &[String], extra_args: &[&str]) -> Option<Output> {
-    let mut args: Vec<&str> = extra_args.to_vec();
-    if use_fzf_tmux_popup() {
-        args.insert(0, "--tmux");
-    }
+    let mut args = vec!["--height=80%", "--layout=reverse", "--border"];
+    args.extend(extra_args);
 
     let mut cmd = Command::new("fzf");
     cmd.args(&args)
@@ -36,18 +33,4 @@ fn run_fzf(items: &[String], extra_args: &[&str]) -> Option<Output> {
     }
 
     child.wait_with_output().ok()
-}
-
-fn use_fzf_tmux_popup() -> bool {
-    env::var_os("TMUX").is_some() && env_flag_enabled("TMUXXER_FZF_TMUX")
-}
-
-fn env_flag_enabled(name: &str) -> bool {
-    match env::var(name) {
-        Ok(value) => !matches!(
-            value.trim().to_ascii_lowercase().as_str(),
-            "0" | "false" | "no" | "off"
-        ),
-        Err(_) => true,
-    }
 }
