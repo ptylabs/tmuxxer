@@ -20,6 +20,10 @@ fn main() {
         [cmd] if cmd == "init" => run_init(),
         [cmd] if cmd == "user-config" => run_user_config(),
         [cmd] if cmd == "--ignore" => run_ignore(),
+        [cmd] if cmd == "--version" || cmd == "-v" => {
+            print_version();
+            Ok(())
+        }
         [cmd] if cmd == "--help" || cmd == "-h" => {
             print_help();
             Ok(())
@@ -67,6 +71,10 @@ fn run_user_config() -> io::Result<()> {
     setup::run_user_config_setup()
 }
 
+fn print_version() {
+    println!("tmuxxer {}", env!("CARGO_PKG_VERSION"));
+}
+
 fn print_help() {
     println!(
         "tmuxxer — tmux sessionizer\n\
@@ -77,6 +85,7 @@ fn print_help() {
           tmuxxer init         Re-run setup and rewrite config\n\
           tmuxxer user-config  Reconfigure tmux/bash user bindings\n\
           tmuxxer --ignore     Add ignored paths or patterns\n\
+          tmuxxer --version    Print version\n\
          \n\
          First run: interactive setup writes config paths, then opens the picker.\n\
          Requires tmux and fzf on PATH.\n\

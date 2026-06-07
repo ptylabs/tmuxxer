@@ -32,6 +32,7 @@ tmuxxer sessionize   # same
 tmuxxer init         # re-run setup and overwrite config
 tmuxxer user-config  # re-run tmux/bash integration setup
 tmuxxer --ignore     # append ignored paths or patterns
+tmuxxer --version    # print version (-v also works)
 tmuxxer --help
 ```
 
