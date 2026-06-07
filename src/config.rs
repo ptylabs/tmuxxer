@@ -26,6 +26,10 @@ impl Config {
         }
         parse_file(&path)
     }
+
+    pub fn save(&self) -> io::Result<()> {
+        save(&self.roots, &self.ignores)
+    }
 }
 
 pub fn config_path() -> PathBuf {
@@ -128,6 +132,20 @@ fn parse_content(content: &str) -> io::Result<Config> {
     Ok(Config { roots, ignores })
 }
 
+pub fn stored_path(path: &Path) -> String {
+    path_for_config(path)
+}
+
+pub fn expand_path(home: &Path, input: &str) -> PathBuf {
+    if input == "~" {
+        return home.to_path_buf();
+    }
+    if let Some(rest) = input.strip_prefix("~/") {
+        return home.join(rest);
+    }
+    PathBuf::from(input)
+}
+
 fn path_for_config(path: &Path) -> String {
     let home = home_dir().unwrap_or_else(|| PathBuf::from("/"));
     if path == home {
@@ -142,13 +160,10 @@ fn path_for_config(path: &Path) -> String {
 }
 
 fn expand_tilde(path: &str) -> PathBuf {
-    if path == "~" {
-        return home_dir().unwrap_or_else(|| PathBuf::from("/"));
-    }
-    if let Some(rest) = path.strip_prefix("~/") {
-        return home_dir().unwrap_or_else(|| PathBuf::from("/")).join(rest);
-    }
-    PathBuf::from(path)
+    expand_path(
+        &home_dir().unwrap_or_else(|| PathBuf::from("/")),
+        path,
+    )
 }
 
 #[cfg(test)]

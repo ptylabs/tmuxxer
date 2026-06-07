@@ -20,7 +20,9 @@ fn main() {
         [cmd] if cmd == "sessionize" || cmd == "s" => run_sessionize(),
         [cmd] if cmd == "init" => run_init(),
         [cmd] if cmd == "user-config" => run_user_config(),
-        [cmd] if cmd == "--ignore" => run_ignore(),
+        [cmd] if cmd == "--ignore" => setup::run_ignore(),
+        [cmd, paths @ ..] if cmd == "--ignore" => setup::run_ignore_direct(paths),
+        [cmd, paths @ ..] if cmd == "--add" => run_add_direct(paths),
         [cmd] if cmd == "--version" || cmd == "-v" => {
             print_version();
             Ok(())
@@ -63,8 +65,14 @@ fn run_init() -> io::Result<()> {
     setup::run()
 }
 
-fn run_ignore() -> io::Result<()> {
-    setup::run_ignore()
+fn run_add_direct(paths: &[String]) -> io::Result<()> {
+    if paths.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "missing path (try tmuxxer --add ~/code)",
+        ));
+    }
+    setup::run_add_direct(paths)
 }
 
 fn run_user_config() -> io::Result<()> {
@@ -86,6 +94,10 @@ fn print_help() {
           tmuxxer init         Re-run setup and rewrite config\n\
           tmuxxer user-config  Reconfigure tmux/bash user bindings\n\
           tmuxxer --ignore     Add ignored paths or patterns\n\
+          tmuxxer --ignore PATH...\n\
+                               Toggle ignores without the interactive prompt\n\
+          tmuxxer --add PATH...\n\
+                               Toggle search roots without re-running init\n\
           tmuxxer --version    Print version\n\
          \n\
          First run: interactive setup writes config paths, then opens the picker.\n\

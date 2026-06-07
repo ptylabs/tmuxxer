@@ -91,7 +91,11 @@ After writing the Bash binding, new interactive Bash shells pick it up automatic
 
 ### Ignoring paths
 
-Run `tmuxxer --ignore` after setup to append ignored path or component patterns to the config. This command only needs the config file; it does not require `tmux` or `fzf`.
+Run `tmuxxer --ignore` after setup to append ignored path or component patterns to the config. Pass paths on the command line to toggle them without the interactive prompt, for example `tmuxxer --ignore ./folder/` adds the ignore and running it again removes it.
+
+Run `tmuxxer --add ~/code` to toggle a search root without re-running init.
+
+These commands only need the config file; they do not require `tmux` or `fzf`.
 
 Examples:
 

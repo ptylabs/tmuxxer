@@ -160,6 +160,8 @@ fn is_ignored(root: &Path, path: &Path, ignore_rules: &[IgnoreRule]) -> bool {
 }
 
 fn expand_ignore_path(raw: &str) -> PathBuf {
+    let raw = raw.trim().trim_end_matches('/');
+    let raw = raw.strip_prefix("./").unwrap_or(raw);
     if raw == "~" {
         return crate::config::home_dir().unwrap_or_else(|| PathBuf::from("/"));
     }
@@ -366,6 +368,19 @@ mod tests {
             Path::new("/tmp/work/app/src/node_modulesx/typescript"),
             &rules
         ));
+    }
+
+    #[test]
+    fn ignore_dot_slash_relative_pattern_matches_at_any_depth() {
+        let rules = ignore_rules(&["./folder/"]);
+        let root = Path::new("/tmp/work");
+
+        assert!(is_ignored(
+            root,
+            Path::new("/tmp/work/app/folder/sub"),
+            &rules
+        ));
+        assert!(!is_ignored(root, Path::new("/tmp/work/app/src"), &rules));
     }
 
     fn ignore_rules(patterns: &[&str]) -> Vec<IgnoreRule> {

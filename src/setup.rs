@@ -1,3 +1,4 @@
+use std::env;
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
@@ -65,8 +66,9 @@ pub fn run() -> io::Result<()> {
         if line.is_empty() {
             break;
         }
-        let path = expand(&home, line);
+        let path = config::expand_path(&home, line);
         if path.is_dir() {
+            let path = path.canonicalize().unwrap_or(path);
             push_unique(&mut paths, path);
             ui.success(&format!("Added {line}"));
         } else {
@@ -90,7 +92,7 @@ pub fn run() -> io::Result<()> {
     );
     let mut roots = Vec::new();
     for path in paths {
-        let label = display_path(&home, &path);
+        let label = config::stored_path(&path);
         let depth = prompt_depth(&ui, &format!("Scan depth for {label}"), 1)?;
         roots.push(SearchRoot { path, depth });
     }
@@ -111,7 +113,7 @@ pub fn run() -> io::Result<()> {
     for root in &roots {
         saved_lines.push(format!(
             "- {} (depth {})",
-            display_path(&home, &root.path),
+            config::stored_path(&root.path),
             root.depth
         ));
     }
@@ -128,16 +130,7 @@ pub fn run() -> io::Result<()> {
 
 pub fn run_ignore() -> io::Result<()> {
     let ui = TerminalUi::new();
-    let mut config = config::Config::load().map_err(|e| {
-        if e.kind() == io::ErrorKind::NotFound {
-            io::Error::new(
-                io::ErrorKind::NotFound,
-                "config not found; run tmuxxer init first",
-            )
-        } else {
-            e
-        }
-    })?;
+    let mut config = load_config()?;
 
     ui.banner(
         "tmuxxer ignore",
@@ -164,17 +157,17 @@ pub fn run_ignore() -> io::Result<()> {
         if line.is_empty() {
             break;
         }
-        if config.ignores.iter().any(|ignore| ignore == line) {
-            ui.warn(&format!("Skipped {line} (already ignored)"));
-        } else {
-            config.ignores.push(line.to_string());
-            added += 1;
-            ui.success(&format!("Added {line}"));
+        match append_ignore(&mut config, line) {
+            AppendResult::Added => {
+                added += 1;
+                ui.success(&format!("Added {line}"));
+            }
+            AppendResult::Duplicate => ui.warn(&format!("Skipped {line} (already ignored)")),
         }
     }
 
     if added > 0 {
-        config::save(&config.roots, &config.ignores)?;
+        config.save()?;
     }
 
     ui.section(
@@ -184,6 +177,67 @@ pub fn run_ignore() -> io::Result<()> {
             config::config_path().display()
         )],
     );
+    Ok(())
+}
+
+pub fn run_ignore_direct(paths: &[String]) -> io::Result<()> {
+    let home = config::home_dir()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "HOME not set"))?;
+    let mut config = load_config()?;
+    let mut changed = false;
+
+    for path in paths {
+        let line = path.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let line = normalize_ignore_cli_input(&home, line)?;
+        match toggle_ignore(&mut config, &home, &line) {
+            ToggleResult::Added => {
+                changed = true;
+                println!("Added {line}");
+            }
+            ToggleResult::Removed(removed) => {
+                changed = true;
+                println!("Removed {removed}");
+            }
+        }
+    }
+
+    if changed {
+        config.save()?;
+    }
+    Ok(())
+}
+
+pub fn run_add_direct(paths: &[String]) -> io::Result<()> {
+    let home = config::home_dir()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "HOME not set"))?;
+    let mut config = load_config()?;
+    let mut changed = false;
+
+    for path in paths {
+        let line = path.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let resolved = resolve_directory(&home, line)?;
+        let label = config::stored_path(&resolved);
+        match toggle_root(&mut config, resolved)? {
+            ToggleResult::Added => {
+                changed = true;
+                println!("Added {label}");
+            }
+            ToggleResult::Removed(removed) => {
+                changed = true;
+                println!("Removed {removed}");
+            }
+        }
+    }
+
+    if changed {
+        config.save()?;
+    }
     Ok(())
 }
 
@@ -271,6 +325,161 @@ fn run_user_config_setup_with_ui(ui: &TerminalUi) -> io::Result<()> {
     Ok(())
 }
 
+enum AppendResult {
+    Added,
+    Duplicate,
+}
+
+#[derive(Debug)]
+enum ToggleResult {
+    Added,
+    Removed(String),
+}
+
+fn toggle_ignore(config: &mut config::Config, home: &Path, normalized: &str) -> ToggleResult {
+    if let Some(index) = find_ignore_index(config, home, normalized) {
+        let removed = config.ignores.remove(index);
+        ToggleResult::Removed(removed)
+    } else {
+        config.ignores.push(normalized.to_string());
+        ToggleResult::Added
+    }
+}
+
+fn toggle_root(config: &mut config::Config, path: PathBuf) -> io::Result<ToggleResult> {
+    let path = path.canonicalize().unwrap_or(path);
+    if let Some(index) = config
+        .roots
+        .iter()
+        .position(|root| paths_equal(&root.path, &path))
+    {
+        if config.roots.len() == 1 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "cannot remove the only search root",
+            ));
+        }
+        let removed = config.roots.remove(index).path;
+        Ok(ToggleResult::Removed(config::stored_path(&removed)))
+    } else {
+        config.roots.push(SearchRoot { path, depth: 1 });
+        Ok(ToggleResult::Added)
+    }
+}
+
+fn find_ignore_index(config: &config::Config, home: &Path, normalized: &str) -> Option<usize> {
+    config
+        .ignores
+        .iter()
+        .position(|entry| ignore_entries_match(home, entry, normalized))
+}
+
+fn ignore_entries_match(home: &Path, left: &str, right: &str) -> bool {
+    if left == right {
+        return true;
+    }
+    match (
+        normalize_ignore_cli_input(home, left),
+        normalize_ignore_cli_input(home, right),
+    ) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
+}
+
+fn load_config() -> io::Result<config::Config> {
+    config::Config::load().map_err(|e| {
+        if e.kind() == io::ErrorKind::NotFound {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "config not found; run tmuxxer init first",
+            )
+        } else {
+            e
+        }
+    })
+}
+
+fn append_ignore(config: &mut config::Config, line: &str) -> AppendResult {
+    if config.ignores.iter().any(|ignore| ignore == line) {
+        return AppendResult::Duplicate;
+    }
+    config.ignores.push(line.to_string());
+    AppendResult::Added
+}
+
+fn paths_equal(left: &Path, right: &Path) -> bool {
+    match (left.canonicalize(), right.canonicalize()) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => left == right,
+    }
+}
+
+fn resolve_directory(home: &Path, input: &str) -> io::Result<PathBuf> {
+    let path = resolve_user_path(home, input)?;
+    let path = path.canonicalize().map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{input}: {e}"),
+        )
+    })?;
+    if !path.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{input}: not a directory"),
+        ));
+    }
+    Ok(path)
+}
+
+fn normalize_ignore_cli_input(home: &Path, line: &str) -> io::Result<String> {
+    let line = line.trim();
+    if !line.contains('/')
+        && line != "."
+        && !line.starts_with('~')
+        && !line.starts_with('/')
+    {
+        return Ok(line.to_string());
+    }
+    if line.contains('*') {
+        return Ok(sanitize_ignore_path_pattern(line));
+    }
+    if line == "."
+        || line.starts_with("./")
+        || line.starts_with('/')
+        || line.starts_with('~')
+    {
+        let path = resolve_user_path(home, line)?;
+        if path.is_dir() {
+            if let Ok(path) = path.canonicalize() {
+                return Ok(config::stored_path(&path));
+            }
+        }
+    }
+    Ok(sanitize_ignore_path_pattern(line))
+}
+
+fn sanitize_ignore_path_pattern(line: &str) -> String {
+    let line = line.trim().trim_end_matches('/');
+    line.strip_prefix("./")
+        .unwrap_or(line)
+        .to_string()
+}
+
+fn resolve_user_path(home: &Path, input: &str) -> io::Result<PathBuf> {
+    let input = input.trim();
+    if input == "." {
+        return env::current_dir();
+    }
+    if input.starts_with("./") {
+        return Ok(env::current_dir()?.join(input.strip_prefix("./").unwrap_or(input)));
+    }
+    if !input.starts_with('~') && !Path::new(input).is_absolute() {
+        return Ok(env::current_dir()?.join(input));
+    }
+    Ok(config::expand_path(home, input))
+}
+
 fn prompt(label: &str) -> io::Result<String> {
     print!("{label}");
     io::stdout().flush()?;
@@ -307,28 +516,174 @@ fn prompt_depth(ui: &TerminalUi, question: &str, default: usize) -> io::Result<u
     Ok(answer.parse::<usize>().unwrap_or(default).max(1))
 }
 
-fn expand(home: &Path, input: &str) -> PathBuf {
-    if input == "~" {
-        return home.to_path_buf();
-    }
-    if let Some(rest) = input.strip_prefix("~/") {
-        return home.join(rest);
-    }
-    PathBuf::from(input)
-}
-
-fn display_path(home: &Path, path: &Path) -> String {
-    if path == home {
-        return "~".to_string();
-    }
-    if let Ok(rest) = path.strip_prefix(home) {
-        return format!("~/{}", rest.display());
-    }
-    path.display().to_string()
-}
-
 fn push_unique(paths: &mut Vec<PathBuf>, path: PathBuf) {
     if !paths.iter().any(|p| p == &path) {
         paths.push(path);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn append_ignore_rejects_duplicates() {
+        let mut config = config::Config {
+            roots: vec![SearchRoot {
+                path: PathBuf::from("/tmp"),
+                depth: 1,
+            }],
+            ignores: vec!["target".to_string()],
+        };
+
+        assert!(matches!(
+            append_ignore(&mut config, "target"),
+            AppendResult::Duplicate
+        ));
+        assert!(matches!(
+            append_ignore(&mut config, "node_modules"),
+            AppendResult::Added
+        ));
+    }
+
+    #[test]
+    fn toggle_ignore_adds_and_removes() {
+        let home = PathBuf::from("/home/user");
+        let mut config = config::Config {
+            roots: vec![SearchRoot {
+                path: PathBuf::from("/tmp"),
+                depth: 1,
+            }],
+            ignores: vec!["target".to_string()],
+        };
+
+        assert!(matches!(
+            toggle_ignore(&mut config, &home, "node_modules"),
+            ToggleResult::Added
+        ));
+        assert_eq!(config.ignores.len(), 2);
+
+        assert!(matches!(
+            toggle_ignore(&mut config, &home, "target"),
+            ToggleResult::Removed(_)
+        ));
+        assert_eq!(config.ignores, vec!["node_modules".to_string()]);
+    }
+
+    #[test]
+    fn toggle_root_adds_and_removes() {
+        let existing = PathBuf::from("/tmp/work");
+        let extra = PathBuf::from("/tmp/other");
+        let mut config = config::Config {
+            roots: vec![
+                SearchRoot {
+                    path: existing.clone(),
+                    depth: 1,
+                },
+                SearchRoot {
+                    path: extra.clone(),
+                    depth: 1,
+                },
+            ],
+            ignores: Vec::new(),
+        };
+
+        assert!(matches!(
+            toggle_root(&mut config, existing.clone()).unwrap(),
+            ToggleResult::Removed(_)
+        ));
+        assert_eq!(config.roots.len(), 1);
+        assert_eq!(config.roots[0].path, extra);
+
+        assert!(matches!(
+            toggle_root(&mut config, PathBuf::from("/tmp/new")).unwrap(),
+            ToggleResult::Added
+        ));
+        assert_eq!(config.roots.len(), 2);
+    }
+
+    #[test]
+    fn toggle_root_rejects_removing_only_root() {
+        let path = PathBuf::from("/tmp/work");
+        let mut config = config::Config {
+            roots: vec![SearchRoot {
+                path: path.clone(),
+                depth: 1,
+            }],
+            ignores: Vec::new(),
+        };
+
+        let err = toggle_root(&mut config, path).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn toggle_root_matches_canonical_duplicates() {
+        let dir = unique_temp_dir("tmuxxer-setup-root");
+        let alias = dir.join("alias");
+        std::os::unix::fs::symlink(&dir, &alias).unwrap();
+
+        let mut config = config::Config {
+            roots: vec![
+                SearchRoot {
+                    path: dir.clone(),
+                    depth: 1,
+                },
+                SearchRoot {
+                    path: PathBuf::from("/tmp/other"),
+                    depth: 1,
+                },
+            ],
+            ignores: Vec::new(),
+        };
+
+        assert!(matches!(
+            toggle_root(&mut config, alias).unwrap(),
+            ToggleResult::Removed(_)
+        ));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn normalize_ignore_cli_input_expands_dot_to_stored_path() {
+        let dir = unique_temp_dir("tmuxxer-setup");
+        let previous = env::current_dir().ok();
+        env::set_current_dir(&dir).unwrap();
+
+        let stored = normalize_ignore_cli_input(&dir, ".").unwrap();
+
+        assert_eq!(stored, config::stored_path(&dir));
+
+        if let Some(previous) = previous {
+            let _ = env::set_current_dir(previous);
+        }
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn normalize_ignore_cli_input_keeps_patterns() {
+        let home = PathBuf::from("/home/user");
+        assert_eq!(
+            normalize_ignore_cli_input(&home, "target").unwrap(),
+            "target"
+        );
+        assert_eq!(
+            normalize_ignore_cli_input(&home, "./folder/").unwrap(),
+            "folder"
+        );
+    }
+
+    fn unique_temp_dir(prefix: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = env::temp_dir().join(format!("{prefix}-{}-{nanos}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        dir
     }
 }
