@@ -41,7 +41,7 @@ tmuxxer --help
 On the first invocation (no config file yet), tmuxxer runs a short CLI setup:
 
 1. **Dependency check** — fails fast if `tmux` or `fzf` are not installed.
-2. **Setup prompts** (plain stdin, no TUI):
+2. **Guided setup wizard**:
    - Optional `[y/N]` prompt to include `~` as a search root.
    - For each common folder found on disk (`~/code`, `~/work`, `~/projects`, `~/personal`, `~/dev`), a `[Y/n]` prompt to include it.
    - Free-form loop to type any extra paths (`~` supported); blank line finishes.

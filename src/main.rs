@@ -5,6 +5,7 @@ mod fzf;
 mod install;
 mod sessionizer;
 mod setup;
+mod terminal_ui;
 mod tmux;
 mod tmux_conf;
 
