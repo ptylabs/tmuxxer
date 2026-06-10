@@ -60,11 +60,11 @@ At the end of setup you can opt in to **Ctrl+F** bindings:
 
 ```tmux
 # >>> tmuxxer >>>
-bind-key -n C-f send-keys C-u \; send-keys -l "'/path/to/tmuxxer' sessionize" \; send-keys Enter
+bind-key -n C-f send-keys C-f
 # <<< tmuxxer <<<
 ```
 
-The tmux binding runs tmuxxer in the current pane so the picker uses the same compact `fzf` panel as it does from Bash. It is intended for shell prompts; if another full-screen program is active in the pane, tmux sends the keys to that program.
+The tmux binding forwards Ctrl+F into the current pane. In interactive Bash shells, the Bash binding handles that key and runs tmuxxer without typing a command into the prompt. If another full-screen program is active in the pane, tmux forwards Ctrl+F to that program.
 
 After writing the binding, setup asks whether to reload tmux immediately. If tmux is not running yet or reload fails, run `tmux source-file <that file>` after starting tmux.
 
@@ -80,10 +80,13 @@ fi
 # <<< tmuxxer <<<
 ```
 
-The sourced `bash-bind.sh` only binds interactive Bash shells outside tmux:
+The sourced `bash-bind.sh` binds interactive Bash shells both inside and outside tmux:
 
 ```bash
-bind -x '"\C-f": "tmuxxer sessionize"'
+_tmuxxer_sessionize() {
+  '/path/to/tmuxxer' sessionize
+}
+bind -x '"\C-f": "_tmuxxer_sessionize"'
 ```
 
 Re-running `tmuxxer init` and accepting the prompt updates that block in place (no duplicates).

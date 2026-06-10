@@ -247,8 +247,8 @@ pub fn run_user_config_setup() -> io::Result<()> {
         "tmuxxer user-config",
         "Install optional Ctrl+F shortcuts for the picker.",
         &[
-            "tmux binding: runs tmuxxer in the current pane.",
-            "bash binding: runs tmuxxer outside tmux in interactive shells.",
+            "tmux binding: forwards Ctrl+F to the current pane.",
+            "bash binding: runs tmuxxer in interactive Bash shells.",
         ],
     );
     run_user_config_setup_with_ui(&ui)
@@ -259,6 +259,7 @@ fn run_user_config_setup_with_ui(ui: &TerminalUi) -> io::Result<()> {
         "Key bindings",
         &[
             "Ctrl+F can open the tmuxxer picker from shell prompts in tmux and Bash.",
+            "Inside tmux, Bash handles the picker so the command is not typed into the pane.",
             "Existing tmuxxer blocks are updated in place.",
         ],
     );
@@ -277,8 +278,7 @@ fn run_user_config_setup_with_ui(ui: &TerminalUi) -> io::Result<()> {
         None
     };
 
-    let bash_added = if prompt_yes_no(ui, "Add Ctrl+F binding for bash? (outside tmux only)", true)?
-    {
+    let bash_added = if prompt_yes_no(ui, "Add Ctrl+F binding for bash?", true)? {
         let already_configured = bashrc::has_ctrl_f_binding()?;
         bashrc::install_ctrl_f_binding()?;
         if already_configured {
