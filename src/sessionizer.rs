@@ -35,7 +35,7 @@ pub fn run() -> io::Result<()> {
     match entry {
         Entry::Session(name) => attach_session(name),
         Entry::Dir(path) => sessionize_dir(path),
-        Entry::Docker(container) => docker::exec_shell(container),
+        Entry::Docker(container) => sessionize_docker(container),
     }
 }
 
@@ -315,9 +315,45 @@ fn sessionize_dir(dir: &Path) -> io::Result<()> {
     }
 }
 
+fn sessionize_docker(container: &docker::Container) -> io::Result<()> {
+    let name = session_name_from_docker(container);
+    let command = docker::shell_command(container);
+
+    if !tmux::inside_tmux() && !tmux::server_running() {
+        tmux::new_session_with_command(&name, &command, false)?;
+        return Ok(());
+    }
+
+    if !tmux::has_session(&name) {
+        tmux::new_session_with_command(&name, &command, true)?;
+    }
+
+    if tmux::inside_tmux() {
+        tmux::switch_client(&name)
+    } else {
+        tmux::attach(&name)
+    }
+}
+
 fn session_name_from_dir(dir: &Path) -> String {
     let base = dir.file_name().and_then(OsStr::to_str).unwrap_or("session");
     base.replace('.', "_")
+}
+
+fn session_name_from_docker(container: &docker::Container) -> String {
+    let name = container
+        .name
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+
+    format!("docker_{name}")
 }
 
 #[cfg(test)]
@@ -394,6 +430,17 @@ mod tests {
             &rules
         ));
         assert!(!is_ignored(root, Path::new("/tmp/work/app/src"), &rules));
+    }
+
+    #[test]
+    fn docker_session_names_are_prefixed_and_sanitized() {
+        let container = docker::Container {
+            id: "c22bd1e7a321".to_string(),
+            name: "api.web/1".to_string(),
+            image: "app:latest".to_string(),
+        };
+
+        assert_eq!(session_name_from_docker(&container), "docker_api_web_1");
     }
 
     fn ignore_rules(patterns: &[&str]) -> Vec<IgnoreRule> {

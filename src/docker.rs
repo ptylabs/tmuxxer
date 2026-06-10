@@ -1,6 +1,7 @@
 use std::collections::HashSet;
-use std::io;
 use std::process::{Command, Stdio};
+
+use crate::install;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Container {
@@ -30,20 +31,17 @@ pub fn containers() -> Vec<Container> {
     }
 }
 
-pub fn exec_shell(container: &Container) -> io::Result<()> {
+pub fn shell_command(container: &Container) -> String {
     let shell = detect_shell(&container.id).unwrap_or_else(|| "sh".to_string());
-    let status = Command::new("docker")
-        .args(["exec", "-it", &container.id, &shell])
-        .status()?;
+    shell_command_with_shell(container, &shell)
+}
 
-    if status.success() {
-        Ok(())
-    } else {
-        Err(io::Error::other(format!(
-            "docker exec failed for '{}' using {shell}",
-            container.name
-        )))
-    }
+fn shell_command_with_shell(container: &Container, shell: &str) -> String {
+    format!(
+        "docker exec -it {} {}",
+        install::shell_quote(&container.id),
+        install::shell_quote(&shell)
+    )
 }
 
 fn parse_containers(output: &str) -> Vec<Container> {
@@ -234,6 +232,20 @@ mod tests {
         assert_eq!(
             parse_shell_env("PATH=/bin\nSHELL=/bin/zsh\n").as_deref(),
             Some("/bin/zsh")
+        );
+    }
+
+    #[test]
+    fn shell_command_runs_docker_exec_with_tty() {
+        let container = Container {
+            id: "c22bd1e7a321".to_string(),
+            name: "web".to_string(),
+            image: "nginx:alpine".to_string(),
+        };
+
+        assert_eq!(
+            shell_command_with_shell(&container, "/bin/bash"),
+            "docker exec -it 'c22bd1e7a321' '/bin/bash'"
         );
     }
 }
