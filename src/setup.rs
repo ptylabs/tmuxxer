@@ -97,10 +97,15 @@ pub fn run() -> io::Result<()> {
         roots.push(SearchRoot { path, depth });
     }
 
-    let ignores = config::Config::load()
-        .map(|config| config.ignores)
+    let previous_config = config::Config::load().ok();
+    let ignores = previous_config
+        .as_ref()
+        .map(|config| config.ignores.clone())
         .unwrap_or_default();
-    config::save(&roots, &ignores)?;
+    let docker_new_session = previous_config
+        .map(|config| config.docker_new_session)
+        .unwrap_or(true);
+    config::save_with_options(&roots, &ignores, docker_new_session)?;
 
     let mut saved_lines = vec![
         format!(
@@ -123,7 +128,7 @@ pub fn run() -> io::Result<()> {
     }
     ui.section("Config written", &saved_lines);
 
-    run_user_config_setup_with_ui(&ui)?;
+    run_user_config_setup_with_ui(&ui, false)?;
 
     Ok(())
 }
@@ -247,41 +252,28 @@ pub fn run_user_config_setup() -> io::Result<()> {
         "tmuxxer user-config",
         "Install optional Ctrl+F shortcuts for the picker.",
         &[
-            "tmux binding: runs tmuxxer in the current pane.",
-            "bash binding: runs tmuxxer outside tmux in interactive shells.",
+            "bash binding: runs tmuxxer in interactive Bash shells.",
+            "tmux passthrough: forwards Ctrl+F to the current pane.",
+            "Docker entries: choose new tmux sessions or the current pane.",
         ],
     );
-    run_user_config_setup_with_ui(&ui)
+    run_user_config_setup_with_ui(&ui, true)
 }
 
-fn run_user_config_setup_with_ui(ui: &TerminalUi) -> io::Result<()> {
+fn run_user_config_setup_with_ui(ui: &TerminalUi, include_docker_config: bool) -> io::Result<()> {
     ui.section(
         "Key bindings",
         &[
             "Ctrl+F can open the tmuxxer picker from shell prompts in tmux and Bash.",
+            "Inside tmux, Bash handles the picker so the command is not typed into the pane.",
             "Existing tmuxxer blocks are updated in place.",
         ],
     );
 
-    let tmux_conf = if prompt_yes_no(ui, "Add Ctrl+F binding for tmux?", true)? {
-        let already_configured = tmux_conf::has_ctrl_f_binding()?;
-        let conf = tmux_conf::install_ctrl_f_binding()?;
-        if already_configured {
-            ui.note("tmux binding was already configured; updated it in place.");
-        } else {
-            ui.success("Added tmux binding.");
-        }
-        Some(conf)
-    } else {
-        ui.note("Skipped tmux binding.");
-        None
-    };
-
-    let bash_added = if prompt_yes_no(ui, "Add Ctrl+F binding for bash? (outside tmux only)", true)?
-    {
-        let already_configured = bashrc::has_ctrl_f_binding()?;
+    let bash_was_configured = bashrc::has_ctrl_f_binding()?;
+    let bash_added = if prompt_yes_no(ui, "Add Ctrl+F binding for bash?", true)? {
         bashrc::install_ctrl_f_binding()?;
-        if already_configured {
+        if bash_was_configured {
             ui.note("Bash binding was already configured; updated it in place.");
         } else {
             ui.success("Added Bash binding.");
@@ -290,6 +282,26 @@ fn run_user_config_setup_with_ui(ui: &TerminalUi) -> io::Result<()> {
     } else {
         ui.note("Skipped Bash binding.");
         false
+    };
+    let bash_available = bash_added || bash_was_configured;
+
+    let tmux_conf = if bash_available {
+        if prompt_yes_no(ui, "Add Ctrl+F tmux passthrough?", true)? {
+            let already_configured = tmux_conf::has_ctrl_f_binding()?;
+            let conf = tmux_conf::install_ctrl_f_binding()?;
+            if already_configured {
+                ui.note("tmux binding was already configured; updated it in place.");
+            } else {
+                ui.success("Added tmux binding.");
+            }
+            Some(conf)
+        } else {
+            ui.note("Skipped tmux binding.");
+            None
+        }
+    } else {
+        ui.note("Skipped tmux binding because it only forwards Ctrl+F to a shell binding.");
+        None
     };
 
     if let Some(conf) = tmux_conf {
@@ -321,6 +333,52 @@ fn run_user_config_setup_with_ui(ui: &TerminalUi) -> io::Result<()> {
             ],
         );
     }
+
+    if include_docker_config {
+        run_docker_config_setup(ui)?;
+    }
+
+    Ok(())
+}
+
+fn run_docker_config_setup(ui: &TerminalUi) -> io::Result<()> {
+    let mut config = match load_config() {
+        Ok(config) => config,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            ui.warn("Docker behavior needs a tmuxxer config file.");
+            ui.note("Run tmuxxer init first, or edit the config file after it exists.");
+            return Ok(());
+        }
+        Err(e) => return Err(e),
+    };
+
+    ui.section(
+        "Docker entries",
+        &[
+            "Default: open each Docker container in its own tmux session.",
+            "Choose no to open Docker directly in the current pane instead.",
+        ],
+    );
+
+    let use_new_session = prompt_yes_no(
+        ui,
+        "Open Docker containers in new tmux sessions?",
+        config.docker_new_session,
+    )?;
+    let label = if use_new_session {
+        "new tmux session"
+    } else {
+        "current pane"
+    };
+
+    if config.docker_new_session == use_new_session {
+        ui.note(&format!("Docker entries already open in the {label}."));
+        return Ok(());
+    }
+
+    config.docker_new_session = use_new_session;
+    config.save()?;
+    ui.success(&format!("Docker entries will open in the {label}."));
 
     Ok(())
 }
@@ -417,12 +475,9 @@ fn paths_equal(left: &Path, right: &Path) -> bool {
 
 fn resolve_directory(home: &Path, input: &str) -> io::Result<PathBuf> {
     let path = resolve_user_path(home, input)?;
-    let path = path.canonicalize().map_err(|e| {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("{input}: {e}"),
-        )
-    })?;
+    let path = path
+        .canonicalize()
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, format!("{input}: {e}")))?;
     if !path.is_dir() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -434,21 +489,13 @@ fn resolve_directory(home: &Path, input: &str) -> io::Result<PathBuf> {
 
 fn normalize_ignore_cli_input(home: &Path, line: &str) -> io::Result<String> {
     let line = line.trim();
-    if !line.contains('/')
-        && line != "."
-        && !line.starts_with('~')
-        && !line.starts_with('/')
-    {
+    if !line.contains('/') && line != "." && !line.starts_with('~') && !line.starts_with('/') {
         return Ok(line.to_string());
     }
     if line.contains('*') {
         return Ok(sanitize_ignore_path_pattern(line));
     }
-    if line == "."
-        || line.starts_with("./")
-        || line.starts_with('/')
-        || line.starts_with('~')
-    {
+    if line == "." || line.starts_with("./") || line.starts_with('/') || line.starts_with('~') {
         let path = resolve_user_path(home, line)?;
         if path.is_dir() {
             if let Ok(path) = path.canonicalize() {
@@ -461,9 +508,7 @@ fn normalize_ignore_cli_input(home: &Path, line: &str) -> io::Result<String> {
 
 fn sanitize_ignore_path_pattern(line: &str) -> String {
     let line = line.trim().trim_end_matches('/');
-    line.strip_prefix("./")
-        .unwrap_or(line)
-        .to_string()
+    line.strip_prefix("./").unwrap_or(line).to_string()
 }
 
 fn resolve_user_path(home: &Path, input: &str) -> io::Result<PathBuf> {
@@ -536,6 +581,7 @@ mod tests {
                 depth: 1,
             }],
             ignores: vec!["target".to_string()],
+            docker_new_session: true,
         };
 
         assert!(matches!(
@@ -557,6 +603,7 @@ mod tests {
                 depth: 1,
             }],
             ignores: vec!["target".to_string()],
+            docker_new_session: true,
         };
 
         assert!(matches!(
@@ -588,6 +635,7 @@ mod tests {
                 },
             ],
             ignores: Vec::new(),
+            docker_new_session: true,
         };
 
         assert!(matches!(
@@ -613,6 +661,7 @@ mod tests {
                 depth: 1,
             }],
             ignores: Vec::new(),
+            docker_new_session: true,
         };
 
         let err = toggle_root(&mut config, path).unwrap_err();
@@ -638,6 +687,7 @@ mod tests {
                 },
             ],
             ignores: Vec::new(),
+            docker_new_session: true,
         };
 
         assert!(matches!(

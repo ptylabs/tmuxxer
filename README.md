@@ -1,6 +1,6 @@
 # tmuxxer
 
-Tmux power tools. A **sessionizer** that combines configured project folders and live tmux sessions in one `fzf` picker, then creates or attaches a session.
+Tmux power tools. A **sessionizer** that combines configured project folders, live tmux sessions, and running Docker containers in one `fzf` picker, then opens the selected target.
 
 Inspired by [tmux-sessionizer](https://github.com/joshmedeski/tmux-sessionizer), with existing sessions listed alongside candidate directories.
 
@@ -11,6 +11,8 @@ Inspired by [tmux-sessionizer](https://github.com/joshmedeski/tmux-sessionizer),
 - Rust toolchain (to build)
 
 If either tool is missing, tmuxxer exits with an error before doing anything else.
+
+Docker is optional. When `docker` is available and the daemon is reachable, running containers are included in the picker.
 
 ## Install
 
@@ -50,21 +52,9 @@ On the first invocation (no config file yet), tmuxxer runs a short CLI setup:
 4. **Session picker** — opens the fzf picker for normal use.
 
 Run `tmuxxer init` anytime to redo this and overwrite the config.
-Run `tmuxxer user-config` anytime to reconfigure the tmux/bash bindings. If a tmuxxer block is already present, it is updated in place instead of duplicated.
+Run `tmuxxer user-config` anytime to reconfigure the tmux/bash bindings and Docker entry behavior. If a tmuxxer block is already present, it is updated in place instead of duplicated.
 
 At the end of setup you can opt in to **Ctrl+F** bindings:
-
-**tmux** (default yes) — written to the user tmux config file tmux is loading, or `~/.tmux.conf` if none exists yet:
-
-```tmux
-# >>> tmuxxer >>>
-bind-key -n C-f send-keys C-u \; send-keys -l "'/path/to/tmuxxer' sessionize" \; send-keys Enter
-# <<< tmuxxer <<<
-```
-
-The tmux binding runs tmuxxer in the current pane so the picker uses the same compact `fzf` panel as it does from Bash. It is intended for shell prompts; if another full-screen program is active in the pane, tmux sends the keys to that program.
-
-After writing the binding, setup asks whether to reload tmux immediately. If tmux is not running yet or reload fails, run `tmux source-file <that file>` after starting tmux.
 
 **bash** (default yes) — `~/.bashrc` sources the runtime config path:
 
@@ -78,14 +68,29 @@ fi
 # <<< tmuxxer <<<
 ```
 
-The sourced `bash-bind.sh` only binds interactive Bash shells outside tmux:
+The sourced `bash-bind.sh` binds interactive Bash shells both inside and outside tmux:
 
 ```bash
-bind -x '"\C-f": "tmuxxer sessionize"'
+_tmuxxer_sessionize() {
+  '/path/to/tmuxxer' sessionize
+}
+bind -x '"\C-f": "_tmuxxer_sessionize"'
 ```
 
+**tmux passthrough** (default yes when the Bash binding exists) — written to the user tmux config file tmux is loading, or `~/.tmux.conf` if none exists yet:
+
+```tmux
+# >>> tmuxxer >>>
+bind-key -n C-f send-keys C-f
+# <<< tmuxxer <<<
+```
+
+The tmux binding forwards Ctrl+F into the current pane. In interactive Bash shells, the Bash binding handles that key and runs tmuxxer without typing a command into the prompt. If another full-screen program is active in the pane, tmux forwards Ctrl+F to that program.
+
+After writing the binding, setup asks whether to reload tmux immediately. If tmux is not running yet or reload fails, run `tmux source-file <that file>` after starting tmux.
+
 Re-running `tmuxxer init` and accepting the prompt updates that block in place (no duplicates).
-`tmuxxer user-config` does the same without touching the project search paths.
+`tmuxxer user-config` does the same without touching the project search paths. It can also toggle Docker entries between opening in a new tmux session and opening directly in the current pane.
 
 After writing the Bash binding, new interactive Bash shells pick it up automatically. The current shell cannot be modified by `tmuxxer init`; run `source ~/.bashrc` there if you want Ctrl+F without opening a new shell.
 
@@ -118,17 +123,21 @@ Matching rules:
 The picker uses `fzf --height=80% --layout=reverse --border` both inside and outside tmux, so it appears as the same compact panel instead of switching between tmux popup and fullscreen modes.
 
 - `[session] name` — attach or switch to an existing tmux session
+- `[docker] name — image (id)` — create or attach a tmux session running a shell inside that container
 - `[dir] label — /full/path` — create a session named from the folder basename (`.` → `_`) and attach
 
 **Session naming**
 
 The session name is the directory basename with dots replaced by underscores (tmux treats `.` specially in targets).
+Docker session names are prefixed with `docker_` and derived from the container name, with non-session-friendly characters replaced by `_`. This only applies when `docker_new_session = true`.
 
 **Attach behavior**
 
 - Outside tmux, no server: `tmux new-session -s NAME -c DIR` (creates and attaches)
 - Outside tmux, server running: create detached if missing, then `tmux attach`
 - Inside tmux: create detached if missing, then `tmux switch-client`
+- Docker containers: by default, create or reuse a tmux session running `docker exec -it CONTAINER SHELL`, preferring the container's `SHELL` env when it points to a supported shell, then common shells such as `bash`, `sh`, and `ash`
+- With `docker_new_session = false`, Docker containers open directly in the current pane instead of a new tmux session
 
 ## Config
 
@@ -138,6 +147,8 @@ Created by the first-run wizard (or `tmuxxer init`). Simple `key = value` format
 
 ```ini
 # Generated by tmuxxer setup
+
+docker_new_session = true
 
 path = ~/code
 depth = 1
@@ -150,9 +161,10 @@ ignore = target
 
 - `path` — search root (repeatable)
 - `depth` — how deep to scan under the preceding path (1 = immediate children only)
+- `docker_new_session` — `true` by default; set to `false` to open Docker directly in the current pane. Edit directly or run `tmuxxer user-config` to change it
 - `ignore` — path or component pattern to skip while scanning, with simple gitignore-like `*` matching
 
-Edit the file by hand anytime; use `tmuxxer init` to reconfigure paths interactively. Existing `ignore` entries are preserved when setup rewrites roots.
+Edit the file by hand anytime; use `tmuxxer init` to reconfigure paths interactively. Existing `ignore` and `docker_new_session` entries are preserved when setup rewrites roots.
 
 ## Project layout
 
@@ -160,6 +172,7 @@ Edit the file by hand anytime; use `tmuxxer init` to reconfigure paths interacti
 src/
   main.rs         CLI entry
   deps.rs         tmux/fzf presence check
+  docker.rs       Docker container listing / shell command
   config.rs       Config load / save
   setup.rs        First-run CLI prompts
   bashrc.rs       Optional Ctrl+F bashrc block

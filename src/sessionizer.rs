@@ -5,16 +5,19 @@ use std::io;
 use std::path::{Component, Path, PathBuf};
 
 use crate::config::Config;
+use crate::docker;
 use crate::fzf;
 use crate::tmux;
 
 const SESSION_PREFIX: &str = "[session] ";
 const DIR_PREFIX: &str = "[dir] ";
+const DOCKER_PREFIX: &str = "[docker] ";
 
 #[derive(Debug, Clone)]
 enum Entry {
     Session(String),
     Dir(PathBuf),
+    Docker(docker::Container),
 }
 
 pub fn run() -> io::Result<()> {
@@ -32,6 +35,7 @@ pub fn run() -> io::Result<()> {
     match entry {
         Entry::Session(name) => attach_session(name),
         Entry::Dir(path) => sessionize_dir(path),
+        Entry::Docker(container) => open_docker(container, config.docker_new_session),
     }
 }
 
@@ -47,6 +51,15 @@ fn collect_entries(config: &Config) -> io::Result<(Vec<String>, HashMap<String, 
     for name in tmux::sessions() {
         let display = format!("{SESSION_PREFIX}{name}");
         map.insert(display.clone(), Entry::Session(name));
+        lines.push(display);
+    }
+
+    for container in docker::containers() {
+        let display = format!(
+            "{DOCKER_PREFIX}{} — {} ({})",
+            container.name, container.image, container.id
+        );
+        map.insert(display.clone(), Entry::Docker(container));
         lines.push(display);
     }
 
@@ -302,9 +315,53 @@ fn sessionize_dir(dir: &Path) -> io::Result<()> {
     }
 }
 
+fn open_docker(container: &docker::Container, new_session: bool) -> io::Result<()> {
+    if new_session {
+        sessionize_docker(container)
+    } else {
+        docker::exec_shell(container)
+    }
+}
+
+fn sessionize_docker(container: &docker::Container) -> io::Result<()> {
+    let name = session_name_from_docker(container);
+    let command = docker::shell_command(container);
+
+    if !tmux::inside_tmux() && !tmux::server_running() {
+        tmux::new_session_with_command(&name, &command, false)?;
+        return Ok(());
+    }
+
+    if !tmux::has_session(&name) {
+        tmux::new_session_with_command(&name, &command, true)?;
+    }
+
+    if tmux::inside_tmux() {
+        tmux::switch_client(&name)
+    } else {
+        tmux::attach(&name)
+    }
+}
+
 fn session_name_from_dir(dir: &Path) -> String {
     let base = dir.file_name().and_then(OsStr::to_str).unwrap_or("session");
     base.replace('.', "_")
+}
+
+fn session_name_from_docker(container: &docker::Container) -> String {
+    let name = container
+        .name
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+
+    format!("docker_{name}")
 }
 
 #[cfg(test)]
@@ -381,6 +438,17 @@ mod tests {
             &rules
         ));
         assert!(!is_ignored(root, Path::new("/tmp/work/app/src"), &rules));
+    }
+
+    #[test]
+    fn docker_session_names_are_prefixed_and_sanitized() {
+        let container = docker::Container {
+            id: "c22bd1e7a321".to_string(),
+            name: "api.web/1".to_string(),
+            image: "app:latest".to_string(),
+        };
+
+        assert_eq!(session_name_from_docker(&container), "docker_api_web_1");
     }
 
     fn ignore_rules(patterns: &[&str]) -> Vec<IgnoreRule> {

@@ -5,7 +5,6 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::config;
-use crate::install;
 
 const MARKER_START: &str = "# >>> tmuxxer >>>";
 const MARKER_END: &str = "# <<< tmuxxer <<<";
@@ -32,12 +31,7 @@ pub fn active_config_path() -> PathBuf {
 
 pub fn install_ctrl_f_binding() -> io::Result<PathBuf> {
     let path = active_config_path();
-    let tmuxxer = install::resolve_tmuxxer()?;
-    let command = format!(
-        "{} sessionize",
-        install::shell_quote(&tmuxxer.to_string_lossy())
-    );
-    let bind_line = send_keys_bind_line(&command);
+    let bind_line = forward_ctrl_f_bind_line();
     let block = format!("{MARKER_START}\n{bind_line}\n{MARKER_END}\n");
 
     let mut content = if path.exists() {
@@ -105,11 +99,8 @@ fn user_config_candidates() -> Vec<PathBuf> {
     candidates
 }
 
-fn send_keys_bind_line(command: &str) -> String {
-    format!(
-        "bind-key -n C-f send-keys C-u \\; send-keys -l {} \\; send-keys Enter",
-        install::tmux_double_quote(&command)
-    )
+fn forward_ctrl_f_bind_line() -> &'static str {
+    "bind-key -n C-f send-keys C-f"
 }
 
 pub fn has_ctrl_f_binding() -> io::Result<bool> {
@@ -138,12 +129,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tmux_binding_runs_picker_in_current_pane() {
-        let line = send_keys_bind_line("tmuxxer sessionize");
+    fn tmux_binding_forwards_ctrl_f_to_current_pane() {
+        let line = forward_ctrl_f_bind_line();
 
-        assert!(line.contains("send-keys C-u"));
-        assert!(line.contains("send-keys -l \"tmuxxer sessionize\""));
-        assert!(line.contains("send-keys Enter"));
+        assert_eq!(line, "bind-key -n C-f send-keys C-f");
+        assert!(!line.contains("sessionize"));
         assert!(!line.contains("display-popup"));
         assert!(!line.contains("run-shell"));
     }

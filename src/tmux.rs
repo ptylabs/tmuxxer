@@ -61,6 +61,23 @@ pub fn new_session(name: &str, dir: &Path, detached: bool) -> io::Result<()> {
     }
 }
 
+pub fn new_session_with_command(name: &str, command: &str, detached: bool) -> io::Result<()> {
+    let mut cmd = Command::new("tmux");
+    cmd.arg("new-session");
+    if detached {
+        cmd.arg("-d");
+    }
+    cmd.args(["-s", name, command]);
+    let status = cmd.status()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(io::Error::other(format!(
+            "tmux new-session failed for '{name}'"
+        )))
+    }
+}
+
 pub fn switch_client(name: &str) -> io::Result<()> {
     let status = Command::new("tmux")
         .args(["switch-client", "-t", name])
