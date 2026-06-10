@@ -252,8 +252,8 @@ pub fn run_user_config_setup() -> io::Result<()> {
         "tmuxxer user-config",
         "Install optional Ctrl+F shortcuts for the picker.",
         &[
-            "tmux binding: forwards Ctrl+F to the current pane.",
             "bash binding: runs tmuxxer in interactive Bash shells.",
+            "tmux passthrough: forwards Ctrl+F to the current pane.",
             "Docker entries: choose new tmux sessions or the current pane.",
         ],
     );
@@ -270,24 +270,10 @@ fn run_user_config_setup_with_ui(ui: &TerminalUi, include_docker_config: bool) -
         ],
     );
 
-    let tmux_conf = if prompt_yes_no(ui, "Add Ctrl+F binding for tmux?", true)? {
-        let already_configured = tmux_conf::has_ctrl_f_binding()?;
-        let conf = tmux_conf::install_ctrl_f_binding()?;
-        if already_configured {
-            ui.note("tmux binding was already configured; updated it in place.");
-        } else {
-            ui.success("Added tmux binding.");
-        }
-        Some(conf)
-    } else {
-        ui.note("Skipped tmux binding.");
-        None
-    };
-
+    let bash_was_configured = bashrc::has_ctrl_f_binding()?;
     let bash_added = if prompt_yes_no(ui, "Add Ctrl+F binding for bash?", true)? {
-        let already_configured = bashrc::has_ctrl_f_binding()?;
         bashrc::install_ctrl_f_binding()?;
-        if already_configured {
+        if bash_was_configured {
             ui.note("Bash binding was already configured; updated it in place.");
         } else {
             ui.success("Added Bash binding.");
@@ -296,6 +282,26 @@ fn run_user_config_setup_with_ui(ui: &TerminalUi, include_docker_config: bool) -
     } else {
         ui.note("Skipped Bash binding.");
         false
+    };
+    let bash_available = bash_added || bash_was_configured;
+
+    let tmux_conf = if bash_available {
+        if prompt_yes_no(ui, "Add Ctrl+F tmux passthrough?", true)? {
+            let already_configured = tmux_conf::has_ctrl_f_binding()?;
+            let conf = tmux_conf::install_ctrl_f_binding()?;
+            if already_configured {
+                ui.note("tmux binding was already configured; updated it in place.");
+            } else {
+                ui.success("Added tmux binding.");
+            }
+            Some(conf)
+        } else {
+            ui.note("Skipped tmux binding.");
+            None
+        }
+    } else {
+        ui.note("Skipped tmux binding because it only forwards Ctrl+F to a shell binding.");
+        None
     };
 
     if let Some(conf) = tmux_conf {

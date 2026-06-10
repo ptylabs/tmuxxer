@@ -56,18 +56,6 @@ Run `tmuxxer user-config` anytime to reconfigure the tmux/bash bindings and Dock
 
 At the end of setup you can opt in to **Ctrl+F** bindings:
 
-**tmux** (default yes) — written to the user tmux config file tmux is loading, or `~/.tmux.conf` if none exists yet:
-
-```tmux
-# >>> tmuxxer >>>
-bind-key -n C-f send-keys C-f
-# <<< tmuxxer <<<
-```
-
-The tmux binding forwards Ctrl+F into the current pane. In interactive Bash shells, the Bash binding handles that key and runs tmuxxer without typing a command into the prompt. If another full-screen program is active in the pane, tmux forwards Ctrl+F to that program.
-
-After writing the binding, setup asks whether to reload tmux immediately. If tmux is not running yet or reload fails, run `tmux source-file <that file>` after starting tmux.
-
 **bash** (default yes) — `~/.bashrc` sources the runtime config path:
 
 ```bash
@@ -88,6 +76,18 @@ _tmuxxer_sessionize() {
 }
 bind -x '"\C-f": "_tmuxxer_sessionize"'
 ```
+
+**tmux passthrough** (default yes when the Bash binding exists) — written to the user tmux config file tmux is loading, or `~/.tmux.conf` if none exists yet:
+
+```tmux
+# >>> tmuxxer >>>
+bind-key -n C-f send-keys C-f
+# <<< tmuxxer <<<
+```
+
+The tmux binding forwards Ctrl+F into the current pane. In interactive Bash shells, the Bash binding handles that key and runs tmuxxer without typing a command into the prompt. If another full-screen program is active in the pane, tmux forwards Ctrl+F to that program.
+
+After writing the binding, setup asks whether to reload tmux immediately. If tmux is not running yet or reload fails, run `tmux source-file <that file>` after starting tmux.
 
 Re-running `tmuxxer init` and accepting the prompt updates that block in place (no duplicates).
 `tmuxxer user-config` does the same without touching the project search paths. It can also toggle Docker entries between opening in a new tmux session and opening directly in the current pane.
