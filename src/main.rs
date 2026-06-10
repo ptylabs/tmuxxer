@@ -1,6 +1,7 @@
 mod bashrc;
 mod config;
 mod deps;
+mod docker;
 mod fzf;
 mod install;
 mod sessionizer;
@@ -89,7 +90,7 @@ fn print_help() {
         "tmuxxer — tmux sessionizer\n\
          \n\
          Usage:\n\
-          tmuxxer              Pick a folder or session (fzf)\n\
+          tmuxxer              Pick a folder, tmux session, or Docker container (fzf)\n\
           tmuxxer sessionize   Same as default\n\
           tmuxxer init         Re-run setup and rewrite config\n\
           tmuxxer user-config  Reconfigure tmux/bash user bindings\n\
@@ -101,7 +102,7 @@ fn print_help() {
           tmuxxer --version    Print version\n\
          \n\
          First run: interactive setup writes config paths, then opens the picker.\n\
-         Requires tmux and fzf on PATH.\n\
+         Requires tmux and fzf on PATH. Docker is optional for container entries.\n\
          \n\
          Config: ~/.config/tmuxxer/config (or $XDG_CONFIG_HOME/tmuxxer/config)\n\
            path = ~/code    Search root (repeatable)\n\

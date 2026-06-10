@@ -1,6 +1,6 @@
 # tmuxxer
 
-Tmux power tools. A **sessionizer** that combines configured project folders and live tmux sessions in one `fzf` picker, then creates or attaches a session.
+Tmux power tools. A **sessionizer** that combines configured project folders, live tmux sessions, and running Docker containers in one `fzf` picker, then opens the selected target.
 
 Inspired by [tmux-sessionizer](https://github.com/joshmedeski/tmux-sessionizer), with existing sessions listed alongside candidate directories.
 
@@ -11,6 +11,8 @@ Inspired by [tmux-sessionizer](https://github.com/joshmedeski/tmux-sessionizer),
 - Rust toolchain (to build)
 
 If either tool is missing, tmuxxer exits with an error before doing anything else.
+
+Docker is optional. When `docker` is available and the daemon is reachable, running containers are included in the picker.
 
 ## Install
 
@@ -118,6 +120,7 @@ Matching rules:
 The picker uses `fzf --height=80% --layout=reverse --border` both inside and outside tmux, so it appears as the same compact panel instead of switching between tmux popup and fullscreen modes.
 
 - `[session] name` — attach or switch to an existing tmux session
+- `[docker] name — image (id)` — enter a shell inside a running Docker container
 - `[dir] label — /full/path` — create a session named from the folder basename (`.` → `_`) and attach
 
 **Session naming**
@@ -129,6 +132,7 @@ The session name is the directory basename with dots replaced by underscores (tm
 - Outside tmux, no server: `tmux new-session -s NAME -c DIR` (creates and attaches)
 - Outside tmux, server running: create detached if missing, then `tmux attach`
 - Inside tmux: create detached if missing, then `tmux switch-client`
+- Docker containers: `docker exec -it CONTAINER SHELL`, preferring the container's `SHELL` env when it points to a supported shell, then common shells such as `bash`, `sh`, and `ash`
 
 ## Config
 
@@ -160,6 +164,7 @@ Edit the file by hand anytime; use `tmuxxer init` to reconfigure paths interacti
 src/
   main.rs         CLI entry
   deps.rs         tmux/fzf presence check
+  docker.rs       Docker container listing / shell entry
   config.rs       Config load / save
   setup.rs        First-run CLI prompts
   bashrc.rs       Optional Ctrl+F bashrc block

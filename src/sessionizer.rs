@@ -5,16 +5,19 @@ use std::io;
 use std::path::{Component, Path, PathBuf};
 
 use crate::config::Config;
+use crate::docker;
 use crate::fzf;
 use crate::tmux;
 
 const SESSION_PREFIX: &str = "[session] ";
 const DIR_PREFIX: &str = "[dir] ";
+const DOCKER_PREFIX: &str = "[docker] ";
 
 #[derive(Debug, Clone)]
 enum Entry {
     Session(String),
     Dir(PathBuf),
+    Docker(docker::Container),
 }
 
 pub fn run() -> io::Result<()> {
@@ -32,6 +35,7 @@ pub fn run() -> io::Result<()> {
     match entry {
         Entry::Session(name) => attach_session(name),
         Entry::Dir(path) => sessionize_dir(path),
+        Entry::Docker(container) => docker::exec_shell(container),
     }
 }
 
@@ -47,6 +51,15 @@ fn collect_entries(config: &Config) -> io::Result<(Vec<String>, HashMap<String, 
     for name in tmux::sessions() {
         let display = format!("{SESSION_PREFIX}{name}");
         map.insert(display.clone(), Entry::Session(name));
+        lines.push(display);
+    }
+
+    for container in docker::containers() {
+        let display = format!(
+            "{DOCKER_PREFIX}{} — {} ({})",
+            container.name, container.image, container.id
+        );
+        map.insert(display.clone(), Entry::Docker(container));
         lines.push(display);
     }
 
