@@ -107,6 +107,8 @@ fn print_help() {
          Config: ~/.config/tmuxxer/config (or $XDG_CONFIG_HOME/tmuxxer/config)\n\
            path = ~/code    Search root (repeatable)\n\
            depth = 1        Scan depth for the preceding path\n\
+           docker_new_session = true\n\
+                            Docker opens in new tmux session when true\n\
            ignore = target  Ignored path or component pattern"
     );
 }

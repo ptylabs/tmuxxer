@@ -35,7 +35,7 @@ pub fn run() -> io::Result<()> {
     match entry {
         Entry::Session(name) => attach_session(name),
         Entry::Dir(path) => sessionize_dir(path),
-        Entry::Docker(container) => sessionize_docker(container),
+        Entry::Docker(container) => open_docker(container, config.docker_new_session),
     }
 }
 
@@ -312,6 +312,14 @@ fn sessionize_dir(dir: &Path) -> io::Result<()> {
         tmux::switch_client(&name)
     } else {
         tmux::attach(&name)
+    }
+}
+
+fn open_docker(container: &docker::Container, new_session: bool) -> io::Result<()> {
+    if new_session {
+        sessionize_docker(container)
+    } else {
+        docker::exec_shell(container)
     }
 }
 

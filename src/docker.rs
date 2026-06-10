@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::io;
 use std::process::{Command, Stdio};
 
 use crate::install;
@@ -32,8 +33,28 @@ pub fn containers() -> Vec<Container> {
 }
 
 pub fn shell_command(container: &Container) -> String {
-    let shell = detect_shell(&container.id).unwrap_or_else(|| "sh".to_string());
+    let shell = shell_for(container);
     shell_command_with_shell(container, &shell)
+}
+
+pub fn exec_shell(container: &Container) -> io::Result<()> {
+    let shell = shell_for(container);
+    let status = Command::new("docker")
+        .args(["exec", "-it", &container.id, &shell])
+        .status()?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err(io::Error::other(format!(
+            "docker exec failed for '{}' using {shell}",
+            container.name
+        )))
+    }
+}
+
+fn shell_for(container: &Container) -> String {
+    detect_shell(&container.id).unwrap_or_else(|| "sh".to_string())
 }
 
 fn shell_command_with_shell(container: &Container, shell: &str) -> String {
