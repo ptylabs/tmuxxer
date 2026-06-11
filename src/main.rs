@@ -10,6 +10,7 @@ mod setup;
 mod terminal_ui;
 mod tmux;
 mod tmux_conf;
+mod updates;
 
 use std::env;
 use std::io;
@@ -23,6 +24,8 @@ fn main() {
         [cmd] if cmd == "init" => run_init(),
         [cmd] if cmd == "user-config" => run_user_config(),
         [cmd, rest @ ..] if cmd == "config" => config_cmd::run(rest),
+        [cmd, rest @ ..] if cmd == "update" => updates::run(rest),
+        [cmd] if cmd == "__tmuxxer_update_check" => updates::run_background_check(),
         [cmd] if cmd == "--ignore" => setup::run_ignore(),
         [cmd, paths @ ..] if cmd == "--ignore" => setup::run_ignore_direct(paths),
         [cmd, paths @ ..] if cmd == "--add" => run_add_direct(paths),
@@ -108,6 +111,10 @@ fn print_help() {
                                Check config syntax and required values\n\
           tmuxxer config migrate\n\
                                Rewrite legacy config as TOML v2\n\
+          tmuxxer update --check\n\
+                               Check GitHub releases for updates\n\
+          tmuxxer update --dismiss\n\
+                               Hide the currently available update\n\
           tmuxxer --ignore     Add ignored paths or patterns\n\
           tmuxxer --ignore PATH...\n\
                                Toggle ignores without the interactive prompt\n\
