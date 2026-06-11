@@ -75,9 +75,14 @@ pub fn run(args: &[String]) -> io::Result<()> {
             println!("Migrated {}", config::config_path().display());
             Ok(())
         }
+        [cmd] if cmd == "validate" => {
+            load_config()?;
+            println!("Config valid: {}", config::config_path().display());
+            Ok(())
+        }
         _ => Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "usage: tmuxxer config path|list|migrate|get KEY|set KEY VALUE|toggle KEY",
+            "usage: tmuxxer config path|list|validate|migrate|get KEY|set KEY VALUE|toggle KEY",
         )),
     }
 }

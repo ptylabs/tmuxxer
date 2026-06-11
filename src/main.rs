@@ -104,6 +104,8 @@ fn print_help() {
                                Set a config value\n\
           tmuxxer config toggle KEY\n\
                                Toggle a boolean config value\n\
+          tmuxxer config validate\n\
+                               Check config syntax and required values\n\
           tmuxxer config migrate\n\
                                Rewrite legacy config as TOML v2\n\
           tmuxxer --ignore     Add ignored paths or patterns\n\

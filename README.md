@@ -38,6 +38,7 @@ tmuxxer config get sources.docker
 tmuxxer config set sources.docker false
 tmuxxer config set session.name_strategy basename
 tmuxxer config toggle sources.docker
+tmuxxer config validate
 tmuxxer config migrate
 tmuxxer --ignore     # append ignored paths or patterns
 tmuxxer --version    # print version (-v also works)
@@ -135,6 +136,7 @@ tmuxxer config get sources.docker
 tmuxxer config set sources.docker false
 tmuxxer config set session.name_strategy basename
 tmuxxer config toggle sources.docker
+tmuxxer config validate
 tmuxxer config migrate
 ```
 
@@ -149,6 +151,7 @@ Supported string keys:
 
 - `session.name_strategy` — `path` for stable path-derived directory session names, or `basename` for legacy basename-only names
 
+`tmuxxer config validate` loads the config and checks syntax, supported keys, supported values, and required settings without opening the picker.
 `tmuxxer config migrate` loads either the legacy config or TOML v2 config and rewrites the file as TOML v2 without changing behavior.
 
 ### Session picker
