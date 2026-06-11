@@ -1,5 +1,6 @@
 mod bashrc;
 mod config;
+mod config_cmd;
 mod deps;
 mod docker;
 mod fzf;
@@ -21,6 +22,7 @@ fn main() {
         [cmd] if cmd == "sessionize" || cmd == "s" => run_sessionize(),
         [cmd] if cmd == "init" => run_init(),
         [cmd] if cmd == "user-config" => run_user_config(),
+        [cmd, rest @ ..] if cmd == "config" => config_cmd::run(rest),
         [cmd] if cmd == "--ignore" => setup::run_ignore(),
         [cmd, paths @ ..] if cmd == "--ignore" => setup::run_ignore_direct(paths),
         [cmd, paths @ ..] if cmd == "--add" => run_add_direct(paths),
@@ -94,6 +96,16 @@ fn print_help() {
           tmuxxer sessionize   Same as default\n\
           tmuxxer init         Re-run setup and rewrite config\n\
           tmuxxer user-config  Reconfigure tmux/bash user bindings\n\
+          tmuxxer config path  Print config file path\n\
+          tmuxxer config list  Print current config values\n\
+          tmuxxer config get KEY\n\
+                               Print a boolean config value\n\
+          tmuxxer config set KEY true|false\n\
+                               Set a boolean config value\n\
+          tmuxxer config toggle KEY\n\
+                               Toggle a boolean config value\n\
+          tmuxxer config migrate\n\
+                               Rewrite legacy config as TOML v2\n\
           tmuxxer --ignore     Add ignored paths or patterns\n\
           tmuxxer --ignore PATH...\n\
                                Toggle ignores without the interactive prompt\n\
@@ -105,10 +117,9 @@ fn print_help() {
          Requires tmux and fzf on PATH. Docker is optional for container entries.\n\
          \n\
          Config: ~/.config/tmuxxer/config (or $XDG_CONFIG_HOME/tmuxxer/config)\n\
-           path = ~/code    Search root (repeatable)\n\
-           depth = 1        Scan depth for the preceding path\n\
-           docker_new_session = true\n\
-                            Docker opens in new tmux session when true\n\
-           ignore = target  Ignored path or component pattern"
+           sources.docker = true     Show Docker entries in the picker\n\
+           docker.new_session = true Open selected Docker entries in new tmux sessions\n\
+           [[search.roots]]          Search roots and scan depth\n\
+           search.ignore             Ignored path or component patterns"
     );
 }

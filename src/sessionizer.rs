@@ -35,47 +35,87 @@ pub fn run() -> io::Result<()> {
     match entry {
         Entry::Session(name) => attach_session(name),
         Entry::Dir(path) => sessionize_dir(path),
-        Entry::Docker(container) => open_docker(container, config.docker_new_session),
+        Entry::Docker(container) => open_docker(container, config.docker.new_session),
     }
 }
 
 fn collect_entries(config: &Config) -> io::Result<(Vec<String>, HashMap<String, Entry>)> {
+    collect_entries_with(config, &RealEntryProvider)
+}
+
+trait EntryProvider {
+    fn sessions(&self) -> Vec<String>;
+    fn docker_containers(&self) -> Vec<docker::Container>;
+}
+
+struct RealEntryProvider;
+
+impl EntryProvider for RealEntryProvider {
+    fn sessions(&self) -> Vec<String> {
+        tmux::sessions()
+    }
+
+    fn docker_containers(&self) -> Vec<docker::Container> {
+        docker::containers()
+    }
+}
+
+fn collect_entries_with<P: EntryProvider>(
+    config: &Config,
+    provider: &P,
+) -> io::Result<(Vec<String>, HashMap<String, Entry>)> {
+    config.validate()?;
+
     let mut lines = Vec::new();
     let mut map = HashMap::new();
     let ignore_rules: Vec<IgnoreRule> = config
+        .search
         .ignores
         .iter()
         .map(|ignore| IgnoreRule::new(ignore))
         .collect();
 
-    for name in tmux::sessions() {
-        let display = format!("{SESSION_PREFIX}{name}");
-        map.insert(display.clone(), Entry::Session(name));
-        lines.push(display);
-    }
-
-    for container in docker::containers() {
-        let display = format!(
-            "{DOCKER_PREFIX}{} — {} ({})",
-            container.name, container.image, container.id
-        );
-        map.insert(display.clone(), Entry::Docker(container));
-        lines.push(display);
-    }
-
-    let mut dirs = Vec::new();
-    for root in &config.roots {
-        if root.path.is_dir() && !is_ignored(&root.path, &root.path, &ignore_rules) {
-            collect_dirs(&root.path, &root.path, root.depth, &ignore_rules, &mut dirs);
+    if config.sources.sessions {
+        for name in provider.sessions() {
+            let display = format!("{SESSION_PREFIX}{name}");
+            map.insert(display.clone(), Entry::Session(name));
+            lines.push(display);
         }
     }
-    dirs.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
 
-    for path in dirs {
-        let label = path.file_name().and_then(OsStr::to_str).unwrap_or("?");
-        let display = format!("{DIR_PREFIX}{label} — {}", path.display());
-        map.insert(display.clone(), Entry::Dir(path));
-        lines.push(display);
+    if config.sources.docker {
+        for container in provider.docker_containers() {
+            let display = format!(
+                "{DOCKER_PREFIX}{} — {} ({})",
+                container.name, container.image, container.id
+            );
+            map.insert(display.clone(), Entry::Docker(container));
+            lines.push(display);
+        }
+    }
+
+    if config.sources.directories {
+        let mut dirs = Vec::new();
+        for root in &config.search.roots {
+            if root.path.is_dir() && !is_ignored(&root.path, &root.path, &ignore_rules) {
+                collect_dirs(&root.path, &root.path, root.depth, &ignore_rules, &mut dirs);
+            }
+        }
+        dirs.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
+
+        for path in dirs {
+            let label = path.file_name().and_then(OsStr::to_str).unwrap_or("?");
+            let display = format!("{DIR_PREFIX}{label} — {}", path.display());
+            map.insert(display.clone(), Entry::Dir(path));
+            lines.push(display);
+        }
+    }
+
+    if lines.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "no entries found for enabled picker sources",
+        ));
     }
 
     Ok((lines, map))
@@ -369,6 +409,51 @@ mod tests {
     use super::*;
 
     #[test]
+    fn disabled_docker_source_does_not_list_containers() {
+        let mut config = config_with_sources(true, false, false);
+        config.search.roots.clear();
+        let provider = TestEntryProvider {
+            sessions: Some(vec!["work".to_string()]),
+            containers: None,
+        };
+
+        let (lines, _) = collect_entries_with(&config, &provider).unwrap();
+
+        assert_eq!(lines, vec!["[session] work"]);
+    }
+
+    #[test]
+    fn disabled_session_source_does_not_list_tmux_sessions() {
+        let config = config_with_sources(false, false, true);
+        let provider = TestEntryProvider {
+            sessions: None,
+            containers: Some(vec![docker::Container {
+                id: "c22bd1e7a321".to_string(),
+                name: "web".to_string(),
+                image: "nginx:alpine".to_string(),
+            }]),
+        };
+
+        let (lines, _) = collect_entries_with(&config, &provider).unwrap();
+
+        assert_eq!(lines, vec!["[docker] web — nginx:alpine (c22bd1e7a321)"]);
+    }
+
+    #[test]
+    fn enabled_sources_with_no_entries_return_clear_error() {
+        let config = config_with_sources(true, false, false);
+        let provider = TestEntryProvider {
+            sessions: Some(Vec::new()),
+            containers: None,
+        };
+
+        let err = collect_entries_with(&config, &provider).unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+        assert!(err.to_string().contains("no entries found"));
+    }
+
+    #[test]
     fn ignore_exact_component_matches_any_path_component() {
         let rules = ignore_rules(&["target"]);
         let root = Path::new("/tmp/work");
@@ -456,5 +541,36 @@ mod tests {
             .iter()
             .map(|pattern| IgnoreRule::new(pattern))
             .collect()
+    }
+
+    fn config_with_sources(
+        sessions: bool,
+        directories: bool,
+        docker_enabled: bool,
+    ) -> crate::config::Config {
+        let mut config = crate::config::Config::default();
+        config.sources.sessions = sessions;
+        config.sources.directories = directories;
+        config.sources.docker = docker_enabled;
+        config
+    }
+
+    struct TestEntryProvider {
+        sessions: Option<Vec<String>>,
+        containers: Option<Vec<docker::Container>>,
+    }
+
+    impl EntryProvider for TestEntryProvider {
+        fn sessions(&self) -> Vec<String> {
+            self.sessions
+                .clone()
+                .expect("tmux sessions should not be listed")
+        }
+
+        fn docker_containers(&self) -> Vec<docker::Container> {
+            self.containers
+                .clone()
+                .expect("docker containers should not be listed")
+        }
     }
 }

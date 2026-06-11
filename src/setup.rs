@@ -97,15 +97,14 @@ pub fn run() -> io::Result<()> {
         roots.push(SearchRoot { path, depth });
     }
 
-    let previous_config = config::Config::load().ok();
-    let ignores = previous_config
-        .as_ref()
-        .map(|config| config.ignores.clone())
-        .unwrap_or_default();
-    let docker_new_session = previous_config
-        .map(|config| config.docker_new_session)
-        .unwrap_or(true);
-    config::save_with_options(&roots, &ignores, docker_new_session)?;
+    let mut next_config = match config::Config::load() {
+        Ok(config) => config,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => config::Config::default(),
+        Err(e) => return Err(e),
+    };
+    let preserved_ignores = next_config.search.ignores.len();
+    next_config.search.roots = roots.clone();
+    next_config.save()?;
 
     let mut saved_lines = vec![
         format!(
@@ -122,9 +121,9 @@ pub fn run() -> io::Result<()> {
             root.depth
         ));
     }
-    if !ignores.is_empty() {
+    if preserved_ignores > 0 {
         saved_lines.push(String::new());
-        saved_lines.push(format!("Preserved {} ignore(s)", ignores.len()));
+        saved_lines.push(format!("Preserved {preserved_ignores} ignore(s)"));
     }
     ui.section("Config written", &saved_lines);
 
@@ -142,10 +141,10 @@ pub fn run_ignore() -> io::Result<()> {
         "Add paths or patterns the picker should skip.",
         &[format!("Config: {}", config::config_path().display())],
     );
-    if config.ignores.is_empty() {
+    if config.search.ignores.is_empty() {
         ui.note("No ignores configured.");
     } else {
-        ui.section("Current ignores", &config.ignores);
+        ui.section("Current ignores", &config.search.ignores);
     }
 
     ui.section(
@@ -254,7 +253,7 @@ pub fn run_user_config_setup() -> io::Result<()> {
         &[
             "bash binding: runs tmuxxer in interactive Bash shells.",
             "tmux passthrough: forwards Ctrl+F to the current pane.",
-            "Docker entries: choose new tmux sessions or the current pane.",
+            "Docker entries: choose picker visibility and opening behavior.",
         ],
     );
     run_user_config_setup_with_ui(&ui, true)
@@ -355,30 +354,42 @@ fn run_docker_config_setup(ui: &TerminalUi) -> io::Result<()> {
     ui.section(
         "Docker entries",
         &[
-            "Default: open each Docker container in its own tmux session.",
-            "Choose no to open Docker directly in the current pane instead.",
+            "Choose whether running containers appear in the picker.",
+            "Opening behavior only applies after selecting a Docker entry.",
         ],
     );
 
+    let show_docker = prompt_yes_no(
+        ui,
+        "Show Docker containers in picker?",
+        config.sources.docker,
+    )?;
     let use_new_session = prompt_yes_no(
         ui,
         "Open Docker containers in new tmux sessions?",
-        config.docker_new_session,
+        config.docker.new_session,
     )?;
-    let label = if use_new_session {
-        "new tmux session"
-    } else {
-        "current pane"
-    };
 
-    if config.docker_new_session == use_new_session {
-        ui.note(&format!("Docker entries already open in the {label}."));
+    if config.sources.docker == show_docker && config.docker.new_session == use_new_session {
+        ui.note("Docker settings are already up to date.");
         return Ok(());
     }
 
-    config.docker_new_session = use_new_session;
+    config.sources.docker = show_docker;
+    config.docker.new_session = use_new_session;
     config.save()?;
-    ui.success(&format!("Docker entries will open in the {label}."));
+    if show_docker {
+        let label = if use_new_session {
+            "new tmux session"
+        } else {
+            "current pane"
+        };
+        ui.success(&format!(
+            "Docker entries will show and open in the {label}."
+        ));
+    } else {
+        ui.success("Docker entries will be hidden from the picker.");
+    }
 
     Ok(())
 }
@@ -396,10 +407,10 @@ enum ToggleResult {
 
 fn toggle_ignore(config: &mut config::Config, home: &Path, normalized: &str) -> ToggleResult {
     if let Some(index) = find_ignore_index(config, home, normalized) {
-        let removed = config.ignores.remove(index);
+        let removed = config.search.ignores.remove(index);
         ToggleResult::Removed(removed)
     } else {
-        config.ignores.push(normalized.to_string());
+        config.search.ignores.push(normalized.to_string());
         ToggleResult::Added
     }
 }
@@ -407,26 +418,28 @@ fn toggle_ignore(config: &mut config::Config, home: &Path, normalized: &str) -> 
 fn toggle_root(config: &mut config::Config, path: PathBuf) -> io::Result<ToggleResult> {
     let path = path.canonicalize().unwrap_or(path);
     if let Some(index) = config
+        .search
         .roots
         .iter()
         .position(|root| paths_equal(&root.path, &path))
     {
-        if config.roots.len() == 1 {
+        if config.search.roots.len() == 1 && config.sources.directories {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "cannot remove the only search root",
+                "cannot remove the only search root while sources.directories is true",
             ));
         }
-        let removed = config.roots.remove(index).path;
+        let removed = config.search.roots.remove(index).path;
         Ok(ToggleResult::Removed(config::stored_path(&removed)))
     } else {
-        config.roots.push(SearchRoot { path, depth: 1 });
+        config.search.roots.push(SearchRoot { path, depth: 1 });
         Ok(ToggleResult::Added)
     }
 }
 
 fn find_ignore_index(config: &config::Config, home: &Path, normalized: &str) -> Option<usize> {
     config
+        .search
         .ignores
         .iter()
         .position(|entry| ignore_entries_match(home, entry, normalized))
@@ -459,10 +472,10 @@ fn load_config() -> io::Result<config::Config> {
 }
 
 fn append_ignore(config: &mut config::Config, line: &str) -> AppendResult {
-    if config.ignores.iter().any(|ignore| ignore == line) {
+    if config.search.ignores.iter().any(|ignore| ignore == line) {
         return AppendResult::Duplicate;
     }
-    config.ignores.push(line.to_string());
+    config.search.ignores.push(line.to_string());
     AppendResult::Added
 }
 
@@ -575,14 +588,8 @@ mod tests {
 
     #[test]
     fn append_ignore_rejects_duplicates() {
-        let mut config = config::Config {
-            roots: vec![SearchRoot {
-                path: PathBuf::from("/tmp"),
-                depth: 1,
-            }],
-            ignores: vec!["target".to_string()],
-            docker_new_session: true,
-        };
+        let mut config = test_config(vec![PathBuf::from("/tmp")]);
+        config.search.ignores = vec!["target".to_string()];
 
         assert!(matches!(
             append_ignore(&mut config, "target"),
@@ -597,75 +604,62 @@ mod tests {
     #[test]
     fn toggle_ignore_adds_and_removes() {
         let home = PathBuf::from("/home/user");
-        let mut config = config::Config {
-            roots: vec![SearchRoot {
-                path: PathBuf::from("/tmp"),
-                depth: 1,
-            }],
-            ignores: vec!["target".to_string()],
-            docker_new_session: true,
-        };
+        let mut config = test_config(vec![PathBuf::from("/tmp")]);
+        config.search.ignores = vec!["target".to_string()];
 
         assert!(matches!(
             toggle_ignore(&mut config, &home, "node_modules"),
             ToggleResult::Added
         ));
-        assert_eq!(config.ignores.len(), 2);
+        assert_eq!(config.search.ignores.len(), 2);
 
         assert!(matches!(
             toggle_ignore(&mut config, &home, "target"),
             ToggleResult::Removed(_)
         ));
-        assert_eq!(config.ignores, vec!["node_modules".to_string()]);
+        assert_eq!(config.search.ignores, vec!["node_modules".to_string()]);
     }
 
     #[test]
     fn toggle_root_adds_and_removes() {
         let existing = PathBuf::from("/tmp/work");
         let extra = PathBuf::from("/tmp/other");
-        let mut config = config::Config {
-            roots: vec![
-                SearchRoot {
-                    path: existing.clone(),
-                    depth: 1,
-                },
-                SearchRoot {
-                    path: extra.clone(),
-                    depth: 1,
-                },
-            ],
-            ignores: Vec::new(),
-            docker_new_session: true,
-        };
+        let mut config = test_config(vec![existing.clone(), extra.clone()]);
 
         assert!(matches!(
             toggle_root(&mut config, existing.clone()).unwrap(),
             ToggleResult::Removed(_)
         ));
-        assert_eq!(config.roots.len(), 1);
-        assert_eq!(config.roots[0].path, extra);
+        assert_eq!(config.search.roots.len(), 1);
+        assert_eq!(config.search.roots[0].path, extra);
 
         assert!(matches!(
             toggle_root(&mut config, PathBuf::from("/tmp/new")).unwrap(),
             ToggleResult::Added
         ));
-        assert_eq!(config.roots.len(), 2);
+        assert_eq!(config.search.roots.len(), 2);
     }
 
     #[test]
     fn toggle_root_rejects_removing_only_root() {
         let path = PathBuf::from("/tmp/work");
-        let mut config = config::Config {
-            roots: vec![SearchRoot {
-                path: path.clone(),
-                depth: 1,
-            }],
-            ignores: Vec::new(),
-            docker_new_session: true,
-        };
+        let mut config = test_config(vec![path.clone()]);
 
         let err = toggle_root(&mut config, path).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn toggle_root_allows_removing_only_root_when_directories_disabled() {
+        let path = PathBuf::from("/tmp/work");
+        let mut config = test_config(vec![path.clone()]);
+        config.sources.directories = false;
+
+        assert!(matches!(
+            toggle_root(&mut config, path).unwrap(),
+            ToggleResult::Removed(_)
+        ));
+        assert!(config.search.roots.is_empty());
     }
 
     #[test]
@@ -675,20 +669,7 @@ mod tests {
         let alias = dir.join("alias");
         std::os::unix::fs::symlink(&dir, &alias).unwrap();
 
-        let mut config = config::Config {
-            roots: vec![
-                SearchRoot {
-                    path: dir.clone(),
-                    depth: 1,
-                },
-                SearchRoot {
-                    path: PathBuf::from("/tmp/other"),
-                    depth: 1,
-                },
-            ],
-            ignores: Vec::new(),
-            docker_new_session: true,
-        };
+        let mut config = test_config(vec![dir.clone(), PathBuf::from("/tmp/other")]);
 
         assert!(matches!(
             toggle_root(&mut config, alias).unwrap(),
@@ -735,5 +716,14 @@ mod tests {
         let dir = env::temp_dir().join(format!("{prefix}-{}-{nanos}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    fn test_config(paths: Vec<PathBuf>) -> config::Config {
+        let mut config = config::Config::default();
+        config.search.roots = paths
+            .into_iter()
+            .map(|path| SearchRoot { path, depth: 1 })
+            .collect();
+        config
     }
 }

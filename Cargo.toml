@@ -4,6 +4,10 @@ version = "0.1.0-beta.3"
 edition = "2021"
 description = "Tmux power tools — sessionizer with fzf"
 
+[dependencies]
+serde = { version = "1.0.228", features = ["derive"] }
+toml = "0.8.23"
+
 [[bin]]
 name = "tmuxxer"
 path = "src/main.rs"
