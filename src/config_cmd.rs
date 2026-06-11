@@ -1,6 +1,6 @@
 use std::io;
 
-use crate::config::{self, Config, BOOL_SETTING_KEYS};
+use crate::config::{self, Config, BOOL_SETTING_KEYS, STRING_SETTING_KEYS};
 
 pub fn run(args: &[String]) -> io::Result<()> {
     match args {
@@ -15,27 +15,53 @@ pub fn run(args: &[String]) -> io::Result<()> {
         }
         [cmd, key] if cmd == "get" => {
             let config = load_config()?;
-            let value = config.bool_setting(key).ok_or_else(|| unknown_key(key))?;
-            println!("{value}");
+            if let Some(value) = config.bool_setting(key) {
+                println!("{value}");
+            } else if let Some(value) = config.string_setting(key) {
+                println!("{value}");
+            } else {
+                return Err(unknown_key(key));
+            }
             Ok(())
         }
         [cmd, key, value] if cmd == "set" => {
-            let value = config::parse_bool(value).ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    format!("invalid value for {key}: {value} (expected true or false)"),
-                )
-            })?;
             let mut config = load_config()?;
-            if !config.set_bool_setting(key, value) {
-                return Err(unknown_key(key));
+            if config.bool_setting(key).is_some() {
+                let value = config::parse_bool(value).ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        format!("invalid value for {key}: {value} (expected true or false)"),
+                    )
+                })?;
+                config.set_bool_setting(key, value);
+                config.save()?;
+                println!("{key} = {value}");
+                return Ok(());
             }
-            config.save()?;
-            println!("{key} = {value}");
-            Ok(())
+
+            if config.string_setting(key).is_some() {
+                config.set_string_setting(key, value).map_err(|message| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        format!("invalid value for {key}: {value} ({message})"),
+                    )
+                })?;
+                config.save()?;
+                let value = config.string_setting(key).unwrap_or("");
+                println!("{key} = {value}");
+                return Ok(());
+            }
+
+            Err(unknown_key(key))
         }
         [cmd, key] if cmd == "toggle" => {
             let mut config = load_config()?;
+            if config.string_setting(key).is_some() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("cannot toggle non-boolean config key '{key}'"),
+                ));
+            }
             let value = config
                 .toggle_bool_setting(key)
                 .ok_or_else(|| unknown_key(key))?;
@@ -51,7 +77,7 @@ pub fn run(args: &[String]) -> io::Result<()> {
         }
         _ => Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "usage: tmuxxer config path|list|migrate|get KEY|set KEY true|false|toggle KEY",
+            "usage: tmuxxer config path|list|migrate|get KEY|set KEY VALUE|toggle KEY",
         )),
     }
 }
@@ -77,6 +103,11 @@ fn format_list(config: &Config) -> String {
         output.push_str(&format!("{key} = {value}\n"));
     }
 
+    for key in STRING_SETTING_KEYS {
+        let value = config.string_setting(key).unwrap_or("");
+        output.push_str(&format!("{key} = {}\n", toml_string(value)));
+    }
+
     output.push_str(&format!(
         "search.ignore = {}\n",
         toml_string_array(&config.search.ignores)
@@ -97,12 +128,16 @@ fn format_list(config: &Config) -> String {
 }
 
 fn unknown_key(key: &str) -> io::Error {
+    let supported = BOOL_SETTING_KEYS
+        .iter()
+        .chain(STRING_SETTING_KEYS.iter())
+        .copied()
+        .collect::<Vec<_>>()
+        .join(", ");
+
     io::Error::new(
         io::ErrorKind::InvalidInput,
-        format!(
-            "unknown config key '{key}' (supported: {})",
-            BOOL_SETTING_KEYS.join(", ")
-        ),
+        format!("unknown config key '{key}' (supported: {supported})"),
     )
 }
 
@@ -142,6 +177,7 @@ mod tests {
         assert!(output.contains("sources.sessions = true"));
         assert!(output.contains("sources.docker = false"));
         assert!(output.contains("docker.new_session = false"));
+        assert!(output.contains("session.name_strategy = \"path\""));
         assert!(output.contains("search.ignore = [\"target\", \".git\"]"));
         assert!(output.contains("search.roots[0].path = \"/tmp/code\""));
         assert!(output.contains("search.roots[0].depth = 2"));

@@ -36,6 +36,7 @@ tmuxxer user-config  # re-run tmux/bash integration setup
 tmuxxer config list  # print configurable launch settings
 tmuxxer config get sources.docker
 tmuxxer config set sources.docker false
+tmuxxer config set session.name_strategy basename
 tmuxxer config toggle sources.docker
 tmuxxer config migrate
 tmuxxer --ignore     # append ignored paths or patterns
@@ -132,6 +133,7 @@ tmuxxer config path
 tmuxxer config list
 tmuxxer config get sources.docker
 tmuxxer config set sources.docker false
+tmuxxer config set session.name_strategy basename
 tmuxxer config toggle sources.docker
 tmuxxer config migrate
 ```
@@ -143,6 +145,10 @@ Supported boolean keys:
 - `sources.docker` — show running Docker containers in the picker
 - `docker.new_session` — open selected Docker entries in their own tmux sessions
 
+Supported string keys:
+
+- `session.name_strategy` — `path` for stable path-derived directory session names, or `basename` for legacy basename-only names
+
 `tmuxxer config migrate` loads either the legacy config or TOML v2 config and rewrites the file as TOML v2 without changing behavior.
 
 ### Session picker
@@ -151,11 +157,11 @@ The picker uses `fzf --height=80% --layout=reverse --border` both inside and out
 
 - `[session] name` — attach or switch to an existing tmux session
 - `[docker] name — image (id)` — open a shell inside that container when `sources.docker = true`
-- `[dir] label — /full/path` — create a session named from the folder basename (`.` → `_`) and attach
+- `[dir] label — /full/path` — create a directory session using `session.name_strategy` and attach
 
 **Session naming**
 
-The session name is the directory basename with dots replaced by underscores (tmux treats `.` specially in targets).
+Directory session names default to `session.name_strategy = "path"`. This uses the directory basename plus a stable path hash, so folders with the same basename map to different tmux sessions deterministically. Set `session.name_strategy = "basename"` to use the legacy basename-only behavior, where dots are replaced by underscores.
 Docker session names are prefixed with `docker_` and derived from the container name, with non-session-friendly characters replaced by `_`. This only applies when `docker.new_session = true`.
 
 **Attach behavior**
@@ -183,6 +189,9 @@ sessions = true
 directories = true
 docker = true
 
+[session]
+name_strategy = "path"
+
 [docker]
 new_session = true
 
@@ -201,11 +210,12 @@ depth = 3
 - `sources.sessions` — include existing tmux sessions in the picker
 - `sources.directories` — include scanned project directories in the picker
 - `sources.docker` — include running Docker containers in the picker
+- `session.name_strategy` — `path` by default for collision-safe directory session names; set to `basename` for legacy names
 - `docker.new_session` — `true` by default; set to `false` to open selected Docker entries directly in the current pane
 - `search.roots` — search roots with per-root `depth` (1 = immediate children only)
 - `search.ignore` — path or component patterns to skip while scanning, with simple gitignore-like `*` matching
 
-Edit the file by hand anytime, or use `tmuxxer config get/set/toggle` for boolean settings. Use `tmuxxer init` to reconfigure paths interactively. Existing `sources`, `docker`, and `search.ignore` settings are preserved when setup rewrites roots.
+Edit the file by hand anytime, or use `tmuxxer config get/set/toggle` for configurable launch settings. Use `tmuxxer init` to reconfigure paths interactively. Existing `sources`, `session`, `docker`, and `search.ignore` settings are preserved when setup rewrites roots.
 
 Legacy key/value configs are loaded automatically:
 

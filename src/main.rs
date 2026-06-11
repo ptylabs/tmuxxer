@@ -99,9 +99,9 @@ fn print_help() {
           tmuxxer config path  Print config file path\n\
           tmuxxer config list  Print current config values\n\
           tmuxxer config get KEY\n\
-                               Print a boolean config value\n\
-          tmuxxer config set KEY true|false\n\
-                               Set a boolean config value\n\
+                               Print a config value\n\
+          tmuxxer config set KEY VALUE\n\
+                               Set a config value\n\
           tmuxxer config toggle KEY\n\
                                Toggle a boolean config value\n\
           tmuxxer config migrate\n\
@@ -118,6 +118,7 @@ fn print_help() {
          \n\
          Config: ~/.config/tmuxxer/config (or $XDG_CONFIG_HOME/tmuxxer/config)\n\
            sources.docker = true     Show Docker entries in the picker\n\
+           session.name_strategy     Directory session names: path or basename\n\
            docker.new_session = true Open selected Docker entries in new tmux sessions\n\
            [[search.roots]]          Search roots and scan depth\n\
            search.ignore             Ignored path or component patterns"

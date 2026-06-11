@@ -10,6 +10,7 @@ pub const BOOL_SETTING_KEYS: &[&str] = &[
     "sources.docker",
     "docker.new_session",
 ];
+pub const STRING_SETTING_KEYS: &[&str] = &["session.name_strategy"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SearchRoot {
@@ -20,6 +21,7 @@ pub struct SearchRoot {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
     pub sources: SourceConfig,
+    pub session: SessionConfig,
     pub docker: DockerConfig,
     pub search: SearchConfig,
 }
@@ -34,6 +36,18 @@ pub struct SourceConfig {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct DockerConfig {
     pub new_session: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionNameStrategy {
+    Basename,
+    Path,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SessionConfig {
+    pub name_strategy: SessionNameStrategy,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -97,6 +111,24 @@ impl Config {
         true
     }
 
+    pub fn string_setting(&self, key: &str) -> Option<&'static str> {
+        match key {
+            "session.name_strategy" => Some(self.session.name_strategy.as_str()),
+            _ => None,
+        }
+    }
+
+    pub fn set_string_setting(&mut self, key: &str, value: &str) -> Result<bool, String> {
+        match key {
+            "session.name_strategy" => {
+                self.session.name_strategy = SessionNameStrategy::parse(value)
+                    .ok_or_else(|| "expected one of: basename, path".to_string())?;
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
+    }
+
     pub fn toggle_bool_setting(&mut self, key: &str) -> Option<bool> {
         let value = !self.bool_setting(key)?;
         self.set_bool_setting(key, value);
@@ -104,10 +136,28 @@ impl Config {
     }
 }
 
+impl SessionNameStrategy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Basename => "basename",
+            Self::Path => "path",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_lowercase().as_str() {
+            "basename" => Some(Self::Basename),
+            "path" => Some(Self::Path),
+            _ => None,
+        }
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
             sources: SourceConfig::default(),
+            session: SessionConfig::default(),
             docker: DockerConfig::default(),
             search: SearchConfig::default(),
         }
@@ -127,6 +177,14 @@ impl Default for SourceConfig {
 impl Default for DockerConfig {
     fn default() -> Self {
         Self { new_session: true }
+    }
+}
+
+impl Default for SessionConfig {
+    fn default() -> Self {
+        Self {
+            name_strategy: SessionNameStrategy::Path,
+        }
     }
 }
 
@@ -180,6 +238,7 @@ fn format_config(config: &Config) -> io::Result<String> {
     let output = ConfigTomlOut {
         version: 2,
         sources: &config.sources,
+        session: &config.session,
         docker: &config.docker,
         search: SearchTomlOut {
             ignore: config.search.ignores.clone(),
@@ -240,11 +299,13 @@ fn parse_toml_content(content: &str) -> io::Result<Config> {
     }
 
     let sources = raw.sources.map(Into::into).unwrap_or_default();
+    let session = raw.session.map(Into::into).unwrap_or_default();
     let docker = raw.docker.map(Into::into).unwrap_or_default();
     let search = raw.search.map(Into::into).unwrap_or_default();
 
     Ok(Config {
         sources,
+        session,
         docker,
         search,
     })
@@ -300,6 +361,7 @@ fn parse_legacy_content(content: &str) -> io::Result<Config> {
 
     Ok(Config {
         sources: SourceConfig::default(),
+        session: SessionConfig::default(),
         docker: DockerConfig {
             new_session: docker_new_session,
         },
@@ -362,6 +424,20 @@ impl From<DockerConfigTomlIn> for DockerConfig {
     }
 }
 
+impl From<SessionConfigTomlIn> for SessionConfig {
+    fn from(value: SessionConfigTomlIn) -> Self {
+        Self {
+            name_strategy: value.name_strategy.unwrap_or_default(),
+        }
+    }
+}
+
+impl Default for SessionNameStrategy {
+    fn default() -> Self {
+        Self::Path
+    }
+}
+
 impl From<SearchConfigTomlIn> for SearchConfig {
     fn from(value: SearchConfigTomlIn) -> Self {
         let roots = value
@@ -387,6 +463,7 @@ impl From<SearchConfigTomlIn> for SearchConfig {
 struct ConfigTomlIn {
     version: Option<u8>,
     sources: Option<SourceConfigTomlIn>,
+    session: Option<SessionConfigTomlIn>,
     docker: Option<DockerConfigTomlIn>,
     search: Option<SearchConfigTomlIn>,
 }
@@ -403,6 +480,12 @@ struct SourceConfigTomlIn {
 #[serde(deny_unknown_fields)]
 struct DockerConfigTomlIn {
     new_session: Option<bool>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SessionConfigTomlIn {
+    name_strategy: Option<SessionNameStrategy>,
 }
 
 #[derive(Deserialize)]
@@ -425,6 +508,7 @@ struct SearchRootTomlIn {
 struct ConfigTomlOut<'a> {
     version: u8,
     sources: &'a SourceConfig,
+    session: &'a SessionConfig,
     docker: &'a DockerConfig,
     search: SearchTomlOut,
 }
@@ -454,6 +538,8 @@ mod tests {
              sessions = false\n\
              directories = true\n\
              docker = false\n\n\
+             [session]\n\
+             name_strategy = \"basename\"\n\n\
              [docker]\n\
              new_session = false\n\n\
              [search]\n\
@@ -467,6 +553,7 @@ mod tests {
         assert!(!config.sources.sessions);
         assert!(config.sources.directories);
         assert!(!config.sources.docker);
+        assert_eq!(config.session.name_strategy, SessionNameStrategy::Basename);
         assert!(!config.docker.new_session);
         assert_eq!(config.search.ignores, vec!["target", ".git"]);
         assert_eq!(config.search.roots[0].path, PathBuf::from("/tmp/code"));
@@ -484,6 +571,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(config.sources, SourceConfig::default());
+        assert_eq!(config.session, SessionConfig::default());
         assert_eq!(config.docker, DockerConfig::default());
         assert_eq!(config.search.ignores, Vec::<String>::new());
         assert_eq!(config.search.roots[0].depth, 1);
@@ -555,6 +643,21 @@ mod tests {
     }
 
     #[test]
+    fn toml_v2_rejects_unknown_session_name_strategy() {
+        let err = parse_content(
+            "version = 2\n\n\
+             [session]\n\
+             name_strategy = \"random\"\n\n\
+             [search]\n\
+             [[search.roots]]\n\
+             path = \"/tmp/code\"\n",
+        )
+        .unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
     fn legacy_global_depth_applies_to_all_paths() {
         let config = parse_content(
             "depth = 2\n\
@@ -590,6 +693,7 @@ mod tests {
         assert!(config.sources.sessions);
         assert!(config.sources.directories);
         assert!(config.sources.docker);
+        assert_eq!(config.session, SessionConfig::default());
         assert!(config.docker.new_session);
     }
 
@@ -615,6 +719,7 @@ mod tests {
         }];
         config.search.ignores = vec!["target".to_string(), ".git".to_string()];
         config.docker.new_session = false;
+        config.session.name_strategy = SessionNameStrategy::Basename;
         config.sources.sessions = false;
 
         save_to_path(&path, &config).unwrap();
@@ -641,6 +746,24 @@ mod tests {
         assert_eq!(config.bool_setting("unknown"), None);
         assert!(!config.set_bool_setting("unknown", true));
         assert_eq!(config.toggle_bool_setting("unknown"), None);
+    }
+
+    #[test]
+    fn string_settings_get_and_set_name_strategy() {
+        let mut config = sample_config();
+
+        assert_eq!(config.string_setting("session.name_strategy"), Some("path"));
+        assert_eq!(
+            config.set_string_setting("session.name_strategy", "basename"),
+            Ok(true)
+        );
+        assert_eq!(config.session.name_strategy, SessionNameStrategy::Basename);
+        assert_eq!(
+            config.set_string_setting("session.name_strategy", "invalid"),
+            Err("expected one of: basename, path".to_string())
+        );
+        assert_eq!(config.set_string_setting("unknown", "path"), Ok(false));
+        assert_eq!(config.string_setting("unknown"), None);
     }
 
     fn sample_config() -> Config {

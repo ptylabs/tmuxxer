@@ -4,7 +4,7 @@ use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf};
 
-use crate::config::Config;
+use crate::config::{Config, SessionNameStrategy};
 use crate::docker;
 use crate::fzf;
 use crate::tmux;
@@ -34,7 +34,7 @@ pub fn run() -> io::Result<()> {
 
     match entry {
         Entry::Session(name) => attach_session(name),
-        Entry::Dir(path) => sessionize_dir(path),
+        Entry::Dir(path) => sessionize_dir(path, config.session.name_strategy),
         Entry::Docker(container) => open_docker(container, config.docker.new_session),
     }
 }
@@ -336,8 +336,8 @@ fn attach_session(name: &str) -> io::Result<()> {
     }
 }
 
-fn sessionize_dir(dir: &Path) -> io::Result<()> {
-    let name = session_name_from_dir(dir);
+fn sessionize_dir(dir: &Path, name_strategy: SessionNameStrategy) -> io::Result<()> {
+    let name = session_name_from_dir(dir, name_strategy);
 
     if !tmux::inside_tmux() && !tmux::server_running() {
         tmux::new_session(&name, dir, false)?;
@@ -383,9 +383,18 @@ fn sessionize_docker(container: &docker::Container) -> io::Result<()> {
     }
 }
 
-fn session_name_from_dir(dir: &Path) -> String {
+fn session_name_from_dir(dir: &Path, name_strategy: SessionNameStrategy) -> String {
     let base = dir.file_name().and_then(OsStr::to_str).unwrap_or("session");
-    base.replace('.', "_")
+    let base = base.replace('.', "_");
+
+    match name_strategy {
+        SessionNameStrategy::Basename => base,
+        SessionNameStrategy::Path => {
+            let base = sanitize_session_name_part(&base);
+            let hash = stable_path_hash(dir);
+            format!("{base}_{hash}")
+        }
+    }
 }
 
 fn session_name_from_docker(container: &docker::Container) -> String {
@@ -402,6 +411,38 @@ fn session_name_from_docker(container: &docker::Container) -> String {
         .collect::<String>();
 
     format!("docker_{name}")
+}
+
+fn sanitize_session_name_part(value: &str) -> String {
+    let sanitized = value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+
+    if sanitized.chars().any(|ch| ch != '_') {
+        sanitized
+    } else {
+        "session".to_string()
+    }
+}
+
+fn stable_path_hash(path: &Path) -> String {
+    let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let normalized = normalize_path(&path);
+    let mut hash = 0xcbf29ce484222325u64;
+
+    for byte in normalized.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+
+    format!("{hash:016x}")
 }
 
 #[cfg(test)]
@@ -534,6 +575,29 @@ mod tests {
         };
 
         assert_eq!(session_name_from_docker(&container), "docker_api_web_1");
+    }
+
+    #[test]
+    fn basename_session_name_strategy_preserves_legacy_names() {
+        let name = session_name_from_dir(
+            Path::new("/tmp/work/api.web"),
+            SessionNameStrategy::Basename,
+        );
+
+        assert_eq!(name, "api_web");
+    }
+
+    #[test]
+    fn path_session_name_strategy_disambiguates_same_basenames() {
+        let left = session_name_from_dir(Path::new("/tmp/work/api.web"), SessionNameStrategy::Path);
+        let right =
+            session_name_from_dir(Path::new("/tmp/client/api.web"), SessionNameStrategy::Path);
+        let repeated =
+            session_name_from_dir(Path::new("/tmp/work/api.web"), SessionNameStrategy::Path);
+
+        assert_ne!(left, right);
+        assert_eq!(left, repeated);
+        assert!(left.starts_with("api_web_"));
     }
 
     fn ignore_rules(patterns: &[&str]) -> Vec<IgnoreRule> {
