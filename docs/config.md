@@ -77,7 +77,7 @@ false, no, n, 0, off
 
 ## Session Name Strategy
 
-`session.name_strategy = "path"` is the default. It uses the directory basename plus a stable path hash, so projects with the same folder name get different tmux sessions.
+`session.name_strategy = "path"` is the default. It creates readable directory sessions from the folder name, then adds a numeric suffix only when tmux already has that session name. For example, selecting `api` creates `api`; selecting another `api` directory, or selecting the same directory again, creates `api-2`, then `api-3`. Use the `[session]` picker entries to switch back to an existing session.
 
 `session.name_strategy = "basename"` uses the legacy basename-only behavior. Dots are replaced with underscores, so different projects with the same basename can collide.
 

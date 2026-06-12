@@ -337,12 +337,17 @@ fn attach_session(name: &str) -> io::Result<()> {
 }
 
 fn sessionize_dir(dir: &Path, name_strategy: SessionNameStrategy) -> io::Result<()> {
-    let name = session_name_from_dir(dir, name_strategy);
+    let base_name = session_name_from_dir(dir, name_strategy);
 
     if !tmux::inside_tmux() && !tmux::server_running() {
-        tmux::new_session(&name, dir, false)?;
+        tmux::new_session(&base_name, dir, false)?;
         return Ok(());
     }
+
+    let name = match name_strategy {
+        SessionNameStrategy::Basename => base_name,
+        SessionNameStrategy::Path => available_session_name(&base_name, &tmux::sessions()),
+    };
 
     if !tmux::has_session(&name) {
         tmux::new_session(&name, dir, true)?;
@@ -389,11 +394,7 @@ fn session_name_from_dir(dir: &Path, name_strategy: SessionNameStrategy) -> Stri
 
     match name_strategy {
         SessionNameStrategy::Basename => base,
-        SessionNameStrategy::Path => {
-            let base = sanitize_session_name_part(&base);
-            let hash = stable_path_hash(dir);
-            format!("{base}_{hash}")
-        }
+        SessionNameStrategy::Path => sanitize_session_name_part(&base),
     }
 }
 
@@ -413,6 +414,21 @@ fn session_name_from_docker(container: &docker::Container) -> String {
     format!("docker_{name}")
 }
 
+fn available_session_name(base: &str, existing: &[String]) -> String {
+    if !existing.iter().any(|name| name == base) {
+        return base.to_string();
+    }
+
+    let mut index = 2usize;
+    loop {
+        let candidate = format!("{base}-{index}");
+        if !existing.iter().any(|name| name == &candidate) {
+            return candidate;
+        }
+        index += 1;
+    }
+}
+
 fn sanitize_session_name_part(value: &str) -> String {
     let sanitized = value
         .chars()
@@ -430,19 +446,6 @@ fn sanitize_session_name_part(value: &str) -> String {
     } else {
         "session".to_string()
     }
-}
-
-fn stable_path_hash(path: &Path) -> String {
-    let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    let normalized = normalize_path(&path);
-    let mut hash = 0xcbf29ce484222325u64;
-
-    for byte in normalized.as_bytes() {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x100000001b3);
-    }
-
-    format!("{hash:016x}")
 }
 
 #[cfg(test)]
@@ -588,16 +591,24 @@ mod tests {
     }
 
     #[test]
-    fn path_session_name_strategy_disambiguates_same_basenames() {
-        let left = session_name_from_dir(Path::new("/tmp/work/api.web"), SessionNameStrategy::Path);
-        let right =
-            session_name_from_dir(Path::new("/tmp/client/api.web"), SessionNameStrategy::Path);
-        let repeated =
-            session_name_from_dir(Path::new("/tmp/work/api.web"), SessionNameStrategy::Path);
+    fn path_session_name_strategy_uses_readable_basename() {
+        let name = session_name_from_dir(Path::new("/tmp/work/api.web"), SessionNameStrategy::Path);
 
-        assert_ne!(left, right);
-        assert_eq!(left, repeated);
-        assert!(left.starts_with("api_web_"));
+        assert_eq!(name, "api_web");
+    }
+
+    #[test]
+    fn available_session_name_uses_base_when_free() {
+        let existing = vec!["other".to_string()];
+
+        assert_eq!(available_session_name("api", &existing), "api");
+    }
+
+    #[test]
+    fn available_session_name_adds_numeric_suffix_on_collision() {
+        let existing = vec!["api".to_string(), "api-2".to_string(), "worker".to_string()];
+
+        assert_eq!(available_session_name("api", &existing), "api-3");
     }
 
     fn ignore_rules(patterns: &[&str]) -> Vec<IgnoreRule> {
