@@ -31,8 +31,17 @@ pub fn active_config_path() -> PathBuf {
 
 pub fn install_ctrl_f_binding() -> io::Result<PathBuf> {
     let path = active_config_path();
-    let bind_line = forward_ctrl_f_bind_line();
-    let block = format!("{MARKER_START}\n{bind_line}\n{MARKER_END}\n");
+    for legacy_path in user_config_paths(&path) {
+        if legacy_path == path || !legacy_path.exists() {
+            continue;
+        }
+
+        let content = fs::read_to_string(&legacy_path)?;
+        let cleaned = remove_legacy_ctrl_f_bindings(&content);
+        if cleaned != content {
+            fs::write(&legacy_path, cleaned)?;
+        }
+    }
 
     let mut content = if path.exists() {
         fs::read_to_string(&path)?
@@ -42,6 +51,9 @@ pub fn install_ctrl_f_binding() -> io::Result<PathBuf> {
         }
         String::new()
     };
+    content = remove_legacy_ctrl_f_bindings(&content);
+    let bind_line = forward_ctrl_f_bind_line();
+    let block = format!("{MARKER_START}\n{bind_line}\n{MARKER_END}\n");
 
     if let Some((start, end)) = find_block_span(&content) {
         content.replace_range(start..end, &block);
@@ -69,12 +81,19 @@ pub fn reload_config(path: &Path) -> io::Result<()> {
 }
 
 fn loaded_user_config_path() -> Option<PathBuf> {
+    loaded_user_config_paths().into_iter().next_back()
+}
+
+fn loaded_user_config_paths() -> Vec<PathBuf> {
     let output = Command::new("tmux")
         .args(["display-message", "-p", "#{config_files}"])
         .output()
-        .ok()?;
+        .ok();
+    let Some(output) = output else {
+        return Vec::new();
+    };
     if !output.status.success() {
-        return None;
+        return Vec::new();
     }
 
     String::from_utf8_lossy(&output.stdout)
@@ -83,7 +102,29 @@ fn loaded_user_config_path() -> Option<PathBuf> {
         .map(str::trim)
         .filter(|path| !path.is_empty())
         .map(PathBuf::from)
-        .rfind(|path| !path.starts_with("/etc") && path.is_file())
+        .filter(|path| !path.starts_with("/etc") && path.is_file())
+        .collect()
+}
+
+fn user_config_paths(active_path: &Path) -> Vec<PathBuf> {
+    let mut paths = loaded_user_config_paths();
+    paths.extend(
+        user_config_candidates()
+            .into_iter()
+            .filter(|path| path.exists()),
+    );
+    paths.push(active_path.to_path_buf());
+    dedupe_paths(paths)
+}
+
+fn dedupe_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut deduped = Vec::new();
+    for path in paths {
+        if !deduped.iter().any(|existing| existing == &path) {
+            deduped.push(path);
+        }
+    }
+    deduped
 }
 
 fn user_config_candidates() -> Vec<PathBuf> {
@@ -101,6 +142,45 @@ fn user_config_candidates() -> Vec<PathBuf> {
 
 fn forward_ctrl_f_bind_line() -> &'static str {
     "bind-key -n C-f send-keys C-f"
+}
+
+fn remove_legacy_ctrl_f_bindings(content: &str) -> String {
+    let mut cleaned = Vec::new();
+    let mut previous_was_legacy_comment = false;
+
+    for line in content.lines() {
+        if line.trim() == "# tmux-helper sessionizer" {
+            previous_was_legacy_comment = true;
+            continue;
+        }
+
+        if is_legacy_tmuxxer_ctrl_f_binding(line) {
+            previous_was_legacy_comment = false;
+            continue;
+        }
+
+        if previous_was_legacy_comment {
+            cleaned.push("# tmux-helper sessionizer");
+            previous_was_legacy_comment = false;
+        }
+        cleaned.push(line);
+    }
+
+    if previous_was_legacy_comment {
+        cleaned.push("# tmux-helper sessionizer");
+    }
+
+    let mut output = cleaned.join("\n");
+    if content.ends_with('\n') && !output.is_empty() {
+        output.push('\n');
+    }
+    output
+}
+
+fn is_legacy_tmuxxer_ctrl_f_binding(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    (trimmed.starts_with("bind-key -n C-f ") || trimmed.starts_with("bind -n C-f "))
+        && trimmed.contains("tmuxxer")
 }
 
 pub fn has_ctrl_f_binding() -> io::Result<bool> {
@@ -136,5 +216,55 @@ mod tests {
         assert!(!line.contains("sessionize"));
         assert!(!line.contains("display-popup"));
         assert!(!line.contains("run-shell"));
+    }
+
+    #[test]
+    fn removes_legacy_literal_sessionize_binding() {
+        let content = "\
+set -g mouse on
+# >>> tmuxxer >>>
+bind-key -n C-f send-keys C-u \\; send-keys -l \"'tmuxxer' sessionize\" \\; send-keys Enter
+# <<< tmuxxer <<<
+";
+
+        let cleaned = remove_legacy_ctrl_f_bindings(content);
+
+        assert!(cleaned.contains(MARKER_START));
+        assert!(cleaned.contains(MARKER_END));
+        assert!(!cleaned.contains("send-keys -l"));
+        assert!(!cleaned.contains("sessionize"));
+    }
+
+    #[test]
+    fn removes_old_tmux_helper_binding_with_comment() {
+        let content = "\
+set -g mouse on
+# tmux-helper sessionizer
+bind-key -n C-f run-shell -b \"/home/me/.cargo/bin/tmuxxer\"
+set -g history-limit 50000
+";
+
+        let cleaned = remove_legacy_ctrl_f_bindings(content);
+
+        assert_eq!(
+            cleaned,
+            "\
+set -g mouse on
+set -g history-limit 50000
+"
+        );
+    }
+
+    #[test]
+    fn keeps_unrelated_ctrl_f_binding() {
+        let content = "\
+bind-key -n C-f send-keys C-f
+bind-key -n C-g run-shell -b \"tmuxxer sessionize\"
+bind-key -n C-f run-shell -b \"tmux-sessionizer\"
+";
+
+        let cleaned = remove_legacy_ctrl_f_bindings(content);
+
+        assert_eq!(cleaned, content);
     }
 }
