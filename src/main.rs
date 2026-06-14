@@ -91,45 +91,53 @@ fn print_version() {
 }
 
 fn print_help() {
-    println!(
-        "tmuxxer — tmux sessionizer\n\
-         \n\
-         Usage:\n\
-          tmuxxer              Pick a folder, tmux session, or Docker container (fzf)\n\
-          tmuxxer sessionize   Same as default\n\
-          tmuxxer init         Re-run setup and rewrite config\n\
-          tmuxxer user-config  Reconfigure tmux/bash user bindings\n\
-          tmuxxer config path  Print config file path\n\
-          tmuxxer config list  Print current config values\n\
-          tmuxxer config get KEY\n\
-                               Print a config value\n\
-          tmuxxer config set KEY VALUE\n\
-                               Set a config value\n\
-          tmuxxer config toggle KEY\n\
-                               Toggle a boolean config value\n\
-          tmuxxer config validate\n\
-                               Check config syntax and required values\n\
-          tmuxxer config migrate\n\
-                               Rewrite legacy config as TOML v2\n\
-          tmuxxer update --check\n\
-                               Check GitHub releases for updates\n\
-          tmuxxer update --dismiss\n\
-                               Hide the currently available update\n\
-          tmuxxer --ignore     Add ignored paths or patterns\n\
-          tmuxxer --ignore PATH...\n\
-                               Toggle ignores without the interactive prompt\n\
-          tmuxxer --add PATH...\n\
-                               Toggle search roots without re-running init\n\
-          tmuxxer --version    Print version\n\
-         \n\
-         First run: interactive setup writes config paths, then opens the picker.\n\
-         Requires tmux and fzf on PATH. Docker is optional for container entries.\n\
-         \n\
-         Config: ~/.config/tmuxxer/config (or $XDG_CONFIG_HOME/tmuxxer/config)\n\
-           sources.docker = true     Show Docker entries in the picker\n\
-           session.name_strategy     Directory session names: path or basename\n\
-           docker.new_session = true Open selected Docker entries in new tmux sessions\n\
-           [[search.roots]]          Search roots and scan depth\n\
-           search.ignore             Ignored path or component patterns"
-    );
+    println!("{}", help_text());
 }
+
+fn help_text() -> &'static str {
+    concat!(
+        "tmuxxer — tmux sessionizer\n",
+        "\n",
+        "Usage:\n",
+        "  tmuxxer              Pick a folder, tmux session, or Docker container (fzf)\n",
+        "  tmuxxer sessionize   Same as default\n",
+        "  tmuxxer init         Re-run setup and rewrite config\n",
+        "  tmuxxer user-config  Reconfigure tmux/bash user bindings\n",
+        "  tmuxxer config path  Print config file path\n",
+        "  tmuxxer config list  Print current config values\n",
+        "  tmuxxer config get KEY\n",
+        "                       Print a config value\n",
+        "  tmuxxer config set KEY VALUE\n",
+        "                       Set a config value\n",
+        "  tmuxxer config toggle KEY\n",
+        "                       Toggle a boolean config value\n",
+        "  tmuxxer config validate\n",
+        "                       Check config syntax and required values\n",
+        "  tmuxxer config migrate\n",
+        "                       Rewrite legacy config as TOML v2\n",
+        "  tmuxxer update --check\n",
+        "                       Check GitHub releases for updates\n",
+        "  tmuxxer update --dismiss\n",
+        "                       Hide the currently available update\n",
+        "  tmuxxer --ignore     Add ignored paths or patterns\n",
+        "  tmuxxer --ignore PATH...\n",
+        "                       Toggle ignores without the interactive prompt\n",
+        "  tmuxxer --add PATH...\n",
+        "                       Toggle search roots without re-running init\n",
+        "  tmuxxer --version    Print version\n",
+        "\n",
+        "First run: interactive setup writes config paths, then opens the picker.\n",
+        "Requires tmux and fzf on PATH. Docker is optional for container entries.\n",
+        "\n",
+        "Config: ~/.config/tmuxxer/config (or $XDG_CONFIG_HOME/tmuxxer/config)\n",
+        "  sources.docker = true     Show Docker entries in the picker\n",
+        "  session.name_strategy     Directory session names: path or basename\n",
+        "  docker.new_session = true Open selected Docker entries in new tmux sessions\n",
+        "  [[search.roots]]          Search roots and scan depth\n",
+        "  search.ignore             Ignored path or component patterns"
+    )
+}
+
+#[cfg(test)]
+#[path = "../tests/unit/main_help.rs"]
+mod tests;
