@@ -83,6 +83,12 @@ impl TerminalUi {
     }
 }
 
+impl Default for TerminalUi {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 fn wrap(line: &str, width: usize) -> Vec<String> {
     if line.is_empty() {
         return vec![String::new()];

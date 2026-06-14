@@ -2,7 +2,9 @@ use serde::{Deserialize, Serialize};
 use std::env;
 use std::fs;
 use std::io;
+use std::ops::Deref;
 use std::path::{Path, PathBuf};
+use thiserror::Error;
 
 pub const BOOL_SETTING_KEYS: &[&str] = &[
     "sources.sessions",
@@ -18,12 +20,86 @@ pub struct SearchRoot {
     pub depth: usize,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
     pub sources: SourceConfig,
     pub session: SessionConfig,
     pub docker: DockerConfig,
     pub search: SearchConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ValidatedConfig {
+    inner: Config,
+}
+
+impl ValidatedConfig {
+    pub fn new(config: Config) -> Result<Self, ConfigError> {
+        config.validate()?;
+        Ok(Self { inner: config })
+    }
+
+    pub fn as_config(&self) -> &Config {
+        &self.inner
+    }
+
+    pub fn into_inner(self) -> Config {
+        self.inner
+    }
+}
+
+impl Deref for ValidatedConfig {
+    type Target = Config;
+
+    fn deref(&self) -> &Self::Target {
+        self.as_config()
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum ConfigError {
+    #[error("config not found at {path}")]
+    NotFound { path: String },
+    #[error("all picker sources are disabled")]
+    AllSourcesDisabled,
+    #[error("config has no search roots while sources.directories is true")]
+    DirectoriesNeedRoots,
+    #[error("unsupported config version {0}")]
+    UnsupportedVersion(u8),
+    #[error("invalid {key}: {value} (expected true or false)")]
+    InvalidBool { key: String, value: String },
+    #[error("TOML parse error: {0}")]
+    TomlParse(#[from] toml::de::Error),
+    #[error("TOML serialize error: {0}")]
+    TomlSerialize(#[from] toml::ser::Error),
+    #[error(transparent)]
+    Io(#[from] io::Error),
+}
+
+impl ConfigError {
+    pub fn kind(&self) -> io::ErrorKind {
+        match self {
+            Self::NotFound { .. } => io::ErrorKind::NotFound,
+            Self::Io(error) => error.kind(),
+            Self::AllSourcesDisabled
+            | Self::DirectoriesNeedRoots
+            | Self::UnsupportedVersion(_)
+            | Self::InvalidBool { .. }
+            | Self::TomlParse(_)
+            | Self::TomlSerialize(_) => io::ErrorKind::InvalidData,
+        }
+    }
+}
+
+impl From<ConfigError> for io::Error {
+    fn from(error: ConfigError) -> Self {
+        if let ConfigError::Io(error) = error {
+            error
+        } else {
+            let kind = error.kind();
+            io::Error::new(kind, error)
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -58,37 +134,37 @@ pub struct SearchConfig {
 }
 
 impl Config {
-    pub fn load() -> io::Result<Self> {
+    pub fn load() -> Result<ValidatedConfig, ConfigError> {
         let path = config_path();
         if !path.is_file() {
-            return Err(io::Error::new(
-                io::ErrorKind::NotFound,
-                format!("config not found at {}", path.display()),
-            ));
+            return Err(ConfigError::NotFound {
+                path: path.display().to_string(),
+            });
         }
         parse_file(&path)
     }
 
-    pub fn save(&self) -> io::Result<()> {
+    pub fn save(&self) -> Result<(), ConfigError> {
         save_to_path(&config_path(), self)
     }
 
-    pub fn validate(&self) -> io::Result<()> {
+    pub fn validate(&self) -> Result<(), ConfigError> {
         if !self.sources.sessions && !self.sources.directories && !self.sources.docker {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "all picker sources are disabled",
-            ));
+            return Err(ConfigError::AllSourcesDisabled);
         }
 
         if self.sources.directories && self.search.roots.is_empty() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "config has no search roots while sources.directories is true",
-            ));
+            return Err(ConfigError::DirectoriesNeedRoots);
         }
 
         Ok(())
+    }
+
+    pub fn with_roots(roots: Vec<SearchRoot>) -> Self {
+        let mut config = Self::default();
+        config.sources.directories = !roots.is_empty();
+        config.search.roots = roots;
+        config
     }
 
     pub fn bool_setting(&self, key: &str) -> Option<bool> {
@@ -134,6 +210,21 @@ impl Config {
         let value = !self.bool_setting(key)?;
         self.set_bool_setting(key, value);
         Some(value)
+    }
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            sources: SourceConfig {
+                sessions: true,
+                directories: false,
+                docker: true,
+            },
+            session: SessionConfig::default(),
+            docker: DockerConfig::default(),
+            search: SearchConfig::default(),
+        }
     }
 }
 
@@ -206,15 +297,16 @@ pub fn parse_bool(value: &str) -> Option<bool> {
     }
 }
 
-fn save_to_path(path: &Path, config: &Config) -> io::Result<()> {
+fn save_to_path(path: &Path, config: &Config) -> Result<(), ConfigError> {
     config.validate()?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(path, format_config(config)?)
+    fs::write(path, format_config(config)?)?;
+    Ok(())
 }
 
-fn format_config(config: &Config) -> io::Result<String> {
+fn format_config(config: &Config) -> Result<String, ConfigError> {
     let roots = config
         .search
         .roots
@@ -237,25 +329,21 @@ fn format_config(config: &Config) -> io::Result<String> {
     };
 
     let mut content = String::from("# Generated by tmuxxer setup\n\n");
-    content.push_str(
-        &toml::to_string_pretty(&output)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?,
-    );
+    content.push_str(&toml::to_string_pretty(&output)?);
     Ok(content)
 }
 
-fn parse_file(path: &Path) -> io::Result<Config> {
+fn parse_file(path: &Path) -> Result<ValidatedConfig, ConfigError> {
     parse_content(&fs::read_to_string(path)?)
 }
 
-fn parse_content(content: &str) -> io::Result<Config> {
+fn parse_content(content: &str) -> Result<ValidatedConfig, ConfigError> {
     let config = if looks_like_toml(content) {
         parse_toml_content(content)?
     } else {
         parse_legacy_content(content)?
     };
-    config.validate()?;
-    Ok(config)
+    ValidatedConfig::new(config)
 }
 
 fn looks_like_toml(content: &str) -> bool {
@@ -276,16 +364,12 @@ fn looks_like_toml(content: &str) -> bool {
     false
 }
 
-fn parse_toml_content(content: &str) -> io::Result<Config> {
-    let raw: ConfigTomlIn =
-        toml::from_str(content).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+fn parse_toml_content(content: &str) -> Result<Config, ConfigError> {
+    let raw: ConfigTomlIn = toml::from_str(content)?;
 
     let version = raw.version.unwrap_or(2);
     if version != 2 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("unsupported config version {version}"),
-        ));
+        return Err(ConfigError::UnsupportedVersion(version));
     }
 
     let sources = raw.sources.map(Into::into).unwrap_or_default();
@@ -301,7 +385,7 @@ fn parse_toml_content(content: &str) -> io::Result<Config> {
     })
 }
 
-fn parse_legacy_content(content: &str) -> io::Result<Config> {
+fn parse_legacy_content(content: &str) -> Result<Config, ConfigError> {
     let mut roots: Vec<SearchRoot> = Vec::new();
     let mut ignores = Vec::new();
     let mut docker_new_session = true;
@@ -338,11 +422,9 @@ fn parse_legacy_content(content: &str) -> io::Result<Config> {
             }
             "ignore" => push_unique_string(&mut ignores, value),
             "docker_new_session" => {
-                docker_new_session = parse_bool(value).ok_or_else(|| {
-                    io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!("invalid {key}: {value} (expected true or false)"),
-                    )
+                docker_new_session = parse_bool(value).ok_or_else(|| ConfigError::InvalidBool {
+                    key: key.clone(),
+                    value: value.to_string(),
                 })?;
             }
             _ => {}
@@ -510,5 +592,4 @@ struct SearchRootTomlOut {
 }
 
 #[cfg(test)]
-#[path = "../tests/unit/config.rs"]
 mod tests;

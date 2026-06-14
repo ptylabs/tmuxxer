@@ -205,5 +205,4 @@ fn find_block_span(content: &str) -> Option<(usize, usize)> {
 }
 
 #[cfg(test)]
-#[path = "../tests/unit/tmux_conf.rs"]
 mod tests;

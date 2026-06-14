@@ -1,5 +1,14 @@
 use super::*;
-use std::time::{SystemTime, UNIX_EPOCH};
+use crate::test_support::TempDir;
+
+#[test]
+fn default_config_is_valid_without_directory_roots() {
+    let config = Config::default();
+
+    assert!(config.validate().is_ok());
+    assert!(!config.sources.directories);
+    assert!(ValidatedConfig::new(config).is_ok());
+}
 
 #[test]
 fn toml_v2_parses_all_fields() {
@@ -181,13 +190,12 @@ fn legacy_docker_new_session_parses_false() {
 
 #[test]
 fn ignores_round_trip_through_save_and_load() {
-    let dir = unique_temp_dir("tmuxxer-config");
+    let dir = TempDir::new("tmuxxer-config");
     let path = dir.join("config");
-    let mut config = Config::default();
-    config.search.roots = vec![SearchRoot {
+    let mut config = Config::with_roots(vec![SearchRoot {
         path: dir.join("work"),
         depth: 2,
-    }];
+    }]);
     config.search.ignores = vec!["target".to_string(), ".git".to_string()];
     config.docker.new_session = false;
     config.session.name_strategy = SessionNameStrategy::Basename;
@@ -196,10 +204,8 @@ fn ignores_round_trip_through_save_and_load() {
     save_to_path(&path, &config).unwrap();
     let loaded = parse_file(&path).unwrap();
 
-    assert_eq!(loaded, config);
+    assert_eq!(loaded.as_config(), &config);
     assert!(fs::read_to_string(&path).unwrap().contains("version = 2"));
-
-    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -238,20 +244,8 @@ fn string_settings_get_and_set_name_strategy() {
 }
 
 fn sample_config() -> Config {
-    let mut config = Config::default();
-    config.search.roots = vec![SearchRoot {
+    Config::with_roots(vec![SearchRoot {
         path: PathBuf::from("/tmp/code"),
         depth: 1,
-    }];
-    config
-}
-
-fn unique_temp_dir(prefix: &str) -> PathBuf {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let dir = env::temp_dir().join(format!("{prefix}-{}-{nanos}", std::process::id()));
-    fs::create_dir_all(&dir).unwrap();
-    dir
+    }])
 }

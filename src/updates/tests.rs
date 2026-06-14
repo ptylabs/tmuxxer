@@ -20,18 +20,26 @@ fn parses_update_state() {
 }
 
 #[test]
-fn extracts_json_string_fields() {
+fn parses_release_json() {
     let body =
         r#"{"tag_name":"v0.2.0","html_url":"https://github.com/ptylabs/tmuxxer/releases/1"}"#;
 
-    assert_eq!(
-        json_string_field(body, "tag_name").as_deref(),
-        Some("v0.2.0")
-    );
-    assert_eq!(
-        json_string_field(body, "html_url").as_deref(),
-        Some("https://github.com/ptylabs/tmuxxer/releases/1")
-    );
+    let (version, url) = parse_release(body).unwrap();
+
+    assert_eq!(version, "0.2.0");
+    assert_eq!(url, "https://github.com/ptylabs/tmuxxer/releases/1");
+}
+
+#[test]
+fn fetch_latest_release_uses_fetcher_trait() {
+    let fetcher = FakeFetcher {
+        body: r#"{"name":"0.2.0"}"#,
+    };
+
+    let (version, url) = fetch_latest_release_with(&fetcher).unwrap();
+
+    assert_eq!(version, "0.2.0");
+    assert_eq!(url, RELEASES_URL);
 }
 
 #[test]
@@ -51,4 +59,14 @@ fn compares_pre_release_versions_with_semver_precedence() {
     assert!(version_is_newer("1.0.0-beta.11", "1.0.0-beta.2"));
     assert!(version_is_newer("1.0.0", "1.0.0-rc.1"));
     assert!(!version_is_newer("1.0.0+build.2", "1.0.0+build.1"));
+}
+
+struct FakeFetcher {
+    body: &'static str,
+}
+
+impl ReleaseFetcher for FakeFetcher {
+    fn fetch(&self, _url: &str) -> Result<String, UpdateError> {
+        Ok(self.body.to_string())
+    }
 }

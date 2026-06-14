@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::io;
 use std::process::{Command, Stdio};
+use thiserror::Error;
 
 use crate::install;
 
@@ -11,50 +12,132 @@ pub struct Container {
     pub image: String,
 }
 
-pub fn containers() -> Vec<Container> {
-    let output = Command::new("docker")
-        .args([
-            "ps",
-            "--filter",
-            "status=running",
-            "--format",
-            "{{.ID}}\t{{.Names}}\t{{.Image}}",
-        ])
-        .output();
+#[derive(Debug, Error)]
+pub enum DockerError {
+    #[error("docker {action} failed for '{container}'")]
+    CommandFailed {
+        action: &'static str,
+        container: String,
+    },
+    #[error(transparent)]
+    Io(#[from] io::Error),
+}
 
-    match output {
-        Ok(output) if output.status.success() => {
-            let mut containers = parse_containers(&String::from_utf8_lossy(&output.stdout));
-            containers.sort_by(|left, right| left.name.cmp(&right.name));
-            containers
+impl From<DockerError> for io::Error {
+    fn from(error: DockerError) -> Self {
+        if let DockerError::Io(error) = error {
+            error
+        } else {
+            io::Error::other(error)
         }
-        _ => Vec::new(),
     }
+}
+
+pub trait DockerCommand {
+    fn containers(&self) -> Vec<Container>;
+    fn shell_command(&self, container: &Container) -> String;
+    fn exec_shell(&self, container: &Container) -> Result<(), DockerError>;
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct SystemDocker;
+
+impl DockerCommand for SystemDocker {
+    fn containers(&self) -> Vec<Container> {
+        let output = Command::new("docker")
+            .args([
+                "ps",
+                "--filter",
+                "status=running",
+                "--format",
+                "{{.ID}}\t{{.Names}}\t{{.Image}}",
+            ])
+            .output();
+
+        match output {
+            Ok(output) if output.status.success() => {
+                let mut containers = parse_containers(&String::from_utf8_lossy(&output.stdout));
+                containers.sort_by(|left, right| left.name.cmp(&right.name));
+                containers
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    fn shell_command(&self, container: &Container) -> String {
+        let shell = self.shell_for(container);
+        shell_command_with_shell(container, &shell)
+    }
+
+    fn exec_shell(&self, container: &Container) -> Result<(), DockerError> {
+        let shell = self.shell_for(container);
+        let status = Command::new("docker")
+            .args(["exec", "-it", &container.id, &shell])
+            .status()?;
+
+        if status.success() {
+            Ok(())
+        } else {
+            Err(DockerError::CommandFailed {
+                action: "exec",
+                container: container.name.clone(),
+            })
+        }
+    }
+}
+
+impl SystemDocker {
+    fn shell_for(&self, container: &Container) -> String {
+        self.detect_shell(&container.id)
+            .unwrap_or_else(|| "sh".to_string())
+    }
+
+    fn detect_shell(&self, container_id: &str) -> Option<String> {
+        let configured_shell = self.configured_shell(container_id);
+        shell_candidates(configured_shell.as_deref())
+            .into_iter()
+            .find(|shell| self.shell_runs(container_id, shell))
+    }
+
+    fn configured_shell(&self, container_id: &str) -> Option<String> {
+        let output = Command::new("docker")
+            .args([
+                "inspect",
+                "--format",
+                "{{range .Config.Env}}{{println .}}{{end}}",
+                container_id,
+            ])
+            .output()
+            .ok()?;
+
+        if !output.status.success() {
+            return None;
+        }
+
+        parse_shell_env(&String::from_utf8_lossy(&output.stdout))
+    }
+
+    fn shell_runs(&self, container_id: &str, shell: &str) -> bool {
+        Command::new("docker")
+            .args(["exec", container_id, shell, "-c", "exit 0"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
+    }
+}
+
+pub fn containers() -> Vec<Container> {
+    SystemDocker.containers()
 }
 
 pub fn shell_command(container: &Container) -> String {
-    let shell = shell_for(container);
-    shell_command_with_shell(container, &shell)
+    SystemDocker.shell_command(container)
 }
 
 pub fn exec_shell(container: &Container) -> io::Result<()> {
-    let shell = shell_for(container);
-    let status = Command::new("docker")
-        .args(["exec", "-it", &container.id, &shell])
-        .status()?;
-
-    if status.success() {
-        Ok(())
-    } else {
-        Err(io::Error::other(format!(
-            "docker exec failed for '{}' using {shell}",
-            container.name
-        )))
-    }
-}
-
-fn shell_for(container: &Container) -> String {
-    detect_shell(&container.id).unwrap_or_else(|| "sh".to_string())
+    SystemDocker.exec_shell(container).map_err(Into::into)
 }
 
 fn shell_command_with_shell(container: &Container, shell: &str) -> String {
@@ -88,31 +171,6 @@ fn parse_container_line(line: &str) -> Option<Container> {
             image.to_string()
         },
     })
-}
-
-fn detect_shell(container_id: &str) -> Option<String> {
-    let configured_shell = configured_shell(container_id);
-    shell_candidates(configured_shell.as_deref())
-        .into_iter()
-        .find(|shell| shell_runs(container_id, shell))
-}
-
-fn configured_shell(container_id: &str) -> Option<String> {
-    let output = Command::new("docker")
-        .args([
-            "inspect",
-            "--format",
-            "{{range .Config.Env}}{{println .}}{{end}}",
-            container_id,
-        ])
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    parse_shell_env(&String::from_utf8_lossy(&output.stdout))
 }
 
 fn parse_shell_env(env_lines: &str) -> Option<String> {
@@ -176,16 +234,5 @@ fn is_supported_shell(shell: &str) -> bool {
     )
 }
 
-fn shell_runs(container_id: &str, shell: &str) -> bool {
-    Command::new("docker")
-        .args(["exec", container_id, shell, "-c", "exit 0"])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
-}
-
 #[cfg(test)]
-#[path = "../tests/unit/docker.rs"]
 mod tests;

@@ -98,12 +98,13 @@ pub fn run() -> io::Result<()> {
     }
 
     let mut next_config = match config::Config::load() {
-        Ok(config) => config,
+        Ok(config) => config.into_inner(),
         Err(e) if e.kind() == io::ErrorKind::NotFound => config::Config::default(),
-        Err(e) => return Err(e),
+        Err(e) => return Err(e.into()),
     };
     let preserved_ignores = next_config.search.ignores.len();
     next_config.search.roots = roots.clone();
+    next_config.sources.directories = true;
     next_config.save()?;
 
     let mut saved_lines = vec![
@@ -479,16 +480,18 @@ fn ignore_entries_match(home: &Path, left: &str, right: &str) -> bool {
 }
 
 fn load_config() -> io::Result<config::Config> {
-    config::Config::load().map_err(|e| {
-        if e.kind() == io::ErrorKind::NotFound {
-            io::Error::new(
-                io::ErrorKind::NotFound,
-                "config not found; run tmuxxer init first",
-            )
-        } else {
-            e
-        }
-    })
+    config::Config::load()
+        .map(|config| config.into_inner())
+        .map_err(|e| {
+            if e.kind() == io::ErrorKind::NotFound {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "config not found; run tmuxxer init first",
+                )
+            } else {
+                e.into()
+            }
+        })
 }
 
 fn append_ignore(config: &mut config::Config, line: &str) -> AppendResult {
@@ -601,5 +604,4 @@ fn push_unique(paths: &mut Vec<PathBuf>, path: PathBuf) {
 }
 
 #[cfg(test)]
-#[path = "../tests/unit/setup.rs"]
 mod tests;

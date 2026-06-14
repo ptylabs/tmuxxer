@@ -22,9 +22,28 @@ enum Entry {
 
 pub fn run() -> io::Result<()> {
     let config = Config::load()?;
-    let (lines, map) = collect_entries(&config)?;
+    run_with(
+        config.as_config(),
+        &tmux::SystemTmux,
+        &docker::SystemDocker,
+        &fzf::FzfPicker,
+    )
+}
 
-    let Some(selection) = fzf::pick(&lines) else {
+fn run_with<T, D, P>(
+    config: &Config,
+    tmux_client: &T,
+    docker_client: &D,
+    picker: &P,
+) -> io::Result<()>
+where
+    T: tmux::TmuxCommand,
+    D: docker::DockerCommand,
+    P: fzf::Picker,
+{
+    let (lines, map) = collect_entries_with(config, tmux_client, docker_client)?;
+
+    let Some(selection) = picker.pick(&lines)? else {
         return Ok(());
     };
 
@@ -33,37 +52,26 @@ pub fn run() -> io::Result<()> {
         .ok_or_else(|| io::Error::other("invalid selection"))?;
 
     match entry {
-        Entry::Session(name) => attach_session(name),
-        Entry::Dir(path) => sessionize_dir(path, config.session.name_strategy),
-        Entry::Docker(container) => open_docker(container, config.docker.new_session),
+        Entry::Session(name) => attach_session(tmux_client, name),
+        Entry::Dir(path) => sessionize_dir(tmux_client, path, config.session.name_strategy),
+        Entry::Docker(container) => open_docker(
+            tmux_client,
+            docker_client,
+            container,
+            config.docker.new_session,
+        ),
     }
 }
 
-fn collect_entries(config: &Config) -> io::Result<(Vec<String>, HashMap<String, Entry>)> {
-    collect_entries_with(config, &RealEntryProvider)
-}
-
-trait EntryProvider {
-    fn sessions(&self) -> Vec<String>;
-    fn docker_containers(&self) -> Vec<docker::Container>;
-}
-
-struct RealEntryProvider;
-
-impl EntryProvider for RealEntryProvider {
-    fn sessions(&self) -> Vec<String> {
-        tmux::sessions()
-    }
-
-    fn docker_containers(&self) -> Vec<docker::Container> {
-        docker::containers()
-    }
-}
-
-fn collect_entries_with<P: EntryProvider>(
+fn collect_entries_with<T, D>(
     config: &Config,
-    provider: &P,
-) -> io::Result<(Vec<String>, HashMap<String, Entry>)> {
+    tmux_client: &T,
+    docker_client: &D,
+) -> io::Result<(Vec<String>, HashMap<String, Entry>)>
+where
+    T: tmux::TmuxCommand,
+    D: docker::DockerCommand,
+{
     config.validate()?;
 
     let mut lines = Vec::new();
@@ -76,7 +84,7 @@ fn collect_entries_with<P: EntryProvider>(
         .collect();
 
     if config.sources.sessions {
-        for name in provider.sessions() {
+        for name in tmux_client.sessions() {
             let display = format!("{SESSION_PREFIX}{name}");
             map.insert(display.clone(), Entry::Session(name));
             lines.push(display);
@@ -84,7 +92,7 @@ fn collect_entries_with<P: EntryProvider>(
     }
 
     if config.sources.docker {
-        for container in provider.docker_containers() {
+        for container in docker_client.containers() {
             let display = format!(
                 "{DOCKER_PREFIX}{} — {} ({})",
                 container.name, container.image, container.id
@@ -328,64 +336,89 @@ fn wildcard_match(pattern: &str, text: &str) -> bool {
     pattern_index == pattern.len()
 }
 
-fn attach_session(name: &str) -> io::Result<()> {
-    if tmux::inside_tmux() {
-        tmux::switch_client(name)
+fn attach_session<T: tmux::TmuxCommand>(tmux_client: &T, name: &str) -> io::Result<()> {
+    if tmux_client.inside_tmux() {
+        tmux_client.switch_client(name)?;
     } else {
-        tmux::attach(name)
+        tmux_client.attach(name)?;
     }
+    Ok(())
 }
 
-fn sessionize_dir(dir: &Path, name_strategy: SessionNameStrategy) -> io::Result<()> {
+fn sessionize_dir<T: tmux::TmuxCommand>(
+    tmux_client: &T,
+    dir: &Path,
+    name_strategy: SessionNameStrategy,
+) -> io::Result<()> {
     let base_name = session_name_from_dir(dir, name_strategy);
 
-    if !tmux::inside_tmux() && !tmux::server_running() {
-        tmux::new_session(&base_name, dir, false)?;
+    if !tmux_client.inside_tmux() && !tmux_client.server_running() {
+        tmux_client.new_session(&base_name, dir, false)?;
         return Ok(());
     }
 
     let name = match name_strategy {
         SessionNameStrategy::Basename => base_name,
-        SessionNameStrategy::Path => available_session_name(&base_name, &tmux::sessions()),
+        SessionNameStrategy::Path => available_session_name(&base_name, &tmux_client.sessions()),
     };
 
-    if !tmux::has_session(&name) {
-        tmux::new_session(&name, dir, true)?;
+    if !tmux_client.has_session(&name) {
+        tmux_client.new_session(&name, dir, true)?;
     }
 
-    if tmux::inside_tmux() {
-        tmux::switch_client(&name)
+    if tmux_client.inside_tmux() {
+        tmux_client.switch_client(&name)?;
     } else {
-        tmux::attach(&name)
+        tmux_client.attach(&name)?;
     }
+    Ok(())
 }
 
-fn open_docker(container: &docker::Container, new_session: bool) -> io::Result<()> {
+fn open_docker<T, D>(
+    tmux_client: &T,
+    docker_client: &D,
+    container: &docker::Container,
+    new_session: bool,
+) -> io::Result<()>
+where
+    T: tmux::TmuxCommand,
+    D: docker::DockerCommand,
+{
     if new_session {
-        sessionize_docker(container)
+        sessionize_docker(tmux_client, docker_client, container)
     } else {
-        docker::exec_shell(container)
+        docker_client.exec_shell(container)?;
+        Ok(())
     }
 }
 
-fn sessionize_docker(container: &docker::Container) -> io::Result<()> {
+fn sessionize_docker<T, D>(
+    tmux_client: &T,
+    docker_client: &D,
+    container: &docker::Container,
+) -> io::Result<()>
+where
+    T: tmux::TmuxCommand,
+    D: docker::DockerCommand,
+{
     let name = session_name_from_docker(container);
-    let command = docker::shell_command(container);
+    let command = docker_client.shell_command(container);
 
-    if !tmux::inside_tmux() && !tmux::server_running() {
-        tmux::new_session_with_command(&name, &command, false)?;
+    if !tmux_client.inside_tmux() && !tmux_client.server_running() {
+        tmux_client.new_session_with_command(&name, &command, false)?;
         return Ok(());
     }
 
-    if !tmux::has_session(&name) {
-        tmux::new_session_with_command(&name, &command, true)?;
+    if !tmux_client.has_session(&name) {
+        tmux_client.new_session_with_command(&name, &command, true)?;
     }
 
-    if tmux::inside_tmux() {
-        tmux::switch_client(&name)
+    if tmux_client.inside_tmux() {
+        tmux_client.switch_client(&name)?;
     } else {
-        tmux::attach(&name)
+        tmux_client.attach(&name)?;
     }
+    Ok(())
 }
 
 fn session_name_from_dir(dir: &Path, name_strategy: SessionNameStrategy) -> String {
@@ -449,5 +482,4 @@ fn sanitize_session_name_part(value: &str) -> String {
 }
 
 #[cfg(test)]
-#[path = "../tests/unit/sessionizer.rs"]
 mod tests;

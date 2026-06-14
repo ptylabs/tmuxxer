@@ -10,7 +10,12 @@ exclude = ["AGENTS.md"]
 
 [dependencies]
 serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+thiserror = "2.0.17"
 toml = "0.8.23"
+
+[dev-dependencies]
+proptest = "1.9.0"
 
 [[bin]]
 name = "tmuxxer"

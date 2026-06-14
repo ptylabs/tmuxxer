@@ -2,9 +2,13 @@ use std::cmp::Ordering;
 use std::env;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
+use std::num::ParseIntError;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use serde::Deserialize;
+use thiserror::Error;
 
 const CHECK_INTERVAL_SECS: u64 = 24 * 60 * 60;
 const LATEST_RELEASE_URL: &str = "https://api.github.com/repos/ptylabs/tmuxxer/releases/latest";
@@ -16,6 +20,115 @@ struct UpdateState {
     latest_version: Option<String>,
     latest_url: Option<String>,
     dismissed_version: Option<String>,
+}
+
+#[derive(Debug, Error)]
+pub enum UpdateError {
+    #[error("release has no version")]
+    ReleaseMissingVersion,
+    #[error("update check needs curl or wget on PATH")]
+    FetchUnavailable,
+    #[error("update fetch command failed: {command}")]
+    FetchCommandFailed { command: &'static str },
+    #[error("invalid update state field {field}: {source}")]
+    StateParse {
+        field: &'static str,
+        #[source]
+        source: ParseIntError,
+    },
+    #[error("release JSON parse error: {0}")]
+    Json(#[from] serde_json::Error),
+    #[error(transparent)]
+    Io(#[from] io::Error),
+}
+
+impl UpdateError {
+    fn kind(&self) -> io::ErrorKind {
+        match self {
+            Self::FetchUnavailable => io::ErrorKind::NotFound,
+            Self::ReleaseMissingVersion | Self::StateParse { .. } | Self::Json(_) => {
+                io::ErrorKind::InvalidData
+            }
+            Self::FetchCommandFailed { .. } => io::ErrorKind::Other,
+            Self::Io(error) => error.kind(),
+        }
+    }
+}
+
+impl From<UpdateError> for io::Error {
+    fn from(error: UpdateError) -> Self {
+        if let UpdateError::Io(error) = error {
+            error
+        } else {
+            let kind = error.kind();
+            io::Error::new(kind, error)
+        }
+    }
+}
+
+pub trait ReleaseFetcher {
+    fn fetch(&self, url: &str) -> Result<String, UpdateError>;
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct CommandReleaseFetcher;
+
+impl ReleaseFetcher for CommandReleaseFetcher {
+    fn fetch(&self, url: &str) -> Result<String, UpdateError> {
+        let mut attempted = false;
+
+        if command_exists("curl") {
+            attempted = true;
+            let output = Command::new("curl")
+                .args([
+                    "--fail",
+                    "--silent",
+                    "--show-error",
+                    "--location",
+                    "--max-time",
+                    "5",
+                    "-H",
+                    "User-Agent: tmuxxer-update-check",
+                    url,
+                ])
+                .output()?;
+            if output.status.success() {
+                return Ok(String::from_utf8_lossy(&output.stdout).to_string());
+            }
+        }
+
+        if command_exists("wget") {
+            attempted = true;
+            let output = Command::new("wget")
+                .args([
+                    "--quiet",
+                    "--timeout=5",
+                    "--user-agent=tmuxxer-update-check",
+                    "-O",
+                    "-",
+                    url,
+                ])
+                .output()?;
+            if output.status.success() {
+                return Ok(String::from_utf8_lossy(&output.stdout).to_string());
+            }
+        }
+
+        if attempted {
+            Err(UpdateError::FetchCommandFailed {
+                command: "curl/wget",
+            })
+        } else {
+            Err(UpdateError::FetchUnavailable)
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct GitHubRelease {
+    tag_name: Option<String>,
+    name: Option<String>,
+    html_url: Option<String>,
 }
 
 pub fn run(args: &[String]) -> io::Result<()> {
@@ -128,55 +241,29 @@ fn print_update_hint() -> io::Result<()> {
     Ok(())
 }
 
-fn fetch_latest_release() -> io::Result<(String, String)> {
-    let body = fetch_url(LATEST_RELEASE_URL)?;
-    let version = json_string_field(&body, "tag_name")
-        .or_else(|| json_string_field(&body, "name"))
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "release has no version"))?;
-    let url = json_string_field(&body, "html_url").unwrap_or_else(|| RELEASES_URL.to_string());
-    Ok((normalize_version(&version).to_string(), url))
+fn fetch_latest_release() -> Result<(String, String), UpdateError> {
+    fetch_latest_release_with(&CommandReleaseFetcher)
 }
 
-fn fetch_url(url: &str) -> io::Result<String> {
-    if command_exists("curl") {
-        let output = Command::new("curl")
-            .args([
-                "--fail",
-                "--silent",
-                "--show-error",
-                "--location",
-                "--max-time",
-                "5",
-                "-H",
-                "User-Agent: tmuxxer-update-check",
-                url,
-            ])
-            .output()?;
-        if output.status.success() {
-            return Ok(String::from_utf8_lossy(&output.stdout).to_string());
-        }
-    }
+fn fetch_latest_release_with(
+    fetcher: &impl ReleaseFetcher,
+) -> Result<(String, String), UpdateError> {
+    let body = fetcher.fetch(LATEST_RELEASE_URL)?;
+    parse_release(&body)
+}
 
-    if command_exists("wget") {
-        let output = Command::new("wget")
-            .args([
-                "--quiet",
-                "--timeout=5",
-                "--user-agent=tmuxxer-update-check",
-                "-O",
-                "-",
-                url,
-            ])
-            .output()?;
-        if output.status.success() {
-            return Ok(String::from_utf8_lossy(&output.stdout).to_string());
-        }
-    }
-
-    Err(io::Error::new(
-        io::ErrorKind::NotFound,
-        "update check needs curl or wget on PATH",
-    ))
+fn parse_release(body: &str) -> Result<(String, String), UpdateError> {
+    let release: GitHubRelease = serde_json::from_str(body)?;
+    let version = release
+        .tag_name
+        .or(release.name)
+        .filter(|version| !version.trim().is_empty())
+        .ok_or(UpdateError::ReleaseMissingVersion)?;
+    let url = release
+        .html_url
+        .filter(|url| !url.trim().is_empty())
+        .unwrap_or_else(|| RELEASES_URL.to_string());
+    Ok((normalize_version(&version).to_string(), url))
 }
 
 fn command_exists(command: &str) -> bool {
@@ -221,7 +308,7 @@ fn acquire_lock() -> io::Result<bool> {
 }
 
 fn read_state() -> io::Result<UpdateState> {
-    parse_state(&fs::read_to_string(state_path())?)
+    parse_state(&fs::read_to_string(state_path())?).map_err(Into::into)
 }
 
 fn write_state(state: &UpdateState) -> io::Result<()> {
@@ -233,7 +320,7 @@ fn write_state(state: &UpdateState) -> io::Result<()> {
     fs::write(path, format_state(state))
 }
 
-fn parse_state(content: &str) -> io::Result<UpdateState> {
+fn parse_state(content: &str) -> Result<UpdateState, UpdateError> {
     let mut state = UpdateState::default();
 
     for line in content.lines() {
@@ -248,9 +335,13 @@ fn parse_state(content: &str) -> io::Result<UpdateState> {
         let value = value.trim();
         match key {
             "last_check_at" => {
-                state.last_check_at = value.parse::<u64>().map_err(|e| {
-                    io::Error::new(io::ErrorKind::InvalidData, format!("last_check_at: {e}"))
-                })?;
+                state.last_check_at =
+                    value
+                        .parse::<u64>()
+                        .map_err(|source| UpdateError::StateParse {
+                            field: "last_check_at",
+                            source,
+                        })?;
             }
             "latest_version" => state.latest_version = non_empty(value),
             "latest_url" => state.latest_url = non_empty(value),
@@ -278,30 +369,6 @@ fn non_empty(value: &str) -> Option<String> {
     } else {
         Some(value.to_string())
     }
-}
-
-fn json_string_field(body: &str, field: &str) -> Option<String> {
-    let needle = format!("\"{field}\"");
-    let after_field = body.split_once(&needle)?.1;
-    let after_colon = after_field.split_once(':')?.1.trim_start();
-    let rest = after_colon.strip_prefix('"')?;
-    let mut value = String::new();
-    let mut escaped = false;
-
-    for ch in rest.chars() {
-        if escaped {
-            value.push(ch);
-            escaped = false;
-        } else if ch == '\\' {
-            escaped = true;
-        } else if ch == '"' {
-            return Some(value);
-        } else {
-            value.push(ch);
-        }
-    }
-
-    None
 }
 
 fn version_is_newer(candidate: &str, current: &str) -> bool {
@@ -418,5 +485,4 @@ fn now_secs() -> u64 {
 }
 
 #[cfg(test)]
-#[path = "../tests/unit/updates.rs"]
 mod tests;

@@ -98,5 +98,4 @@ pub fn shell_quote(value: &str) -> String {
 }
 
 #[cfg(test)]
-#[path = "../tests/unit/install.rs"]
 mod tests;

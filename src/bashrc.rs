@@ -103,5 +103,4 @@ fn find_block_span(content: &str) -> Option<(usize, usize)> {
 }
 
 #[cfg(test)]
-#[path = "../tests/unit/bashrc.rs"]
 mod tests;

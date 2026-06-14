@@ -88,16 +88,18 @@ pub fn run(args: &[String]) -> io::Result<()> {
 }
 
 fn load_config() -> io::Result<Config> {
-    Config::load().map_err(|e| {
-        if e.kind() == io::ErrorKind::NotFound {
-            io::Error::new(
-                io::ErrorKind::NotFound,
-                "config not found; run tmuxxer init first",
-            )
-        } else {
-            e
-        }
-    })
+    Config::load()
+        .map(|config| config.into_inner())
+        .map_err(|e| {
+            if e.kind() == io::ErrorKind::NotFound {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "config not found; run tmuxxer init first",
+                )
+            } else {
+                e.into()
+            }
+        })
 }
 
 fn format_list(config: &Config) -> String {
@@ -161,5 +163,4 @@ fn toml_string(value: &str) -> String {
 }
 
 #[cfg(test)]
-#[path = "../tests/unit/config_cmd.rs"]
 mod tests;

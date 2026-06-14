@@ -1,7 +1,6 @@
 use super::*;
 use crate::terminal_ui::TerminalUi;
-use std::fs;
-use std::time::{SystemTime, UNIX_EPOCH};
+use crate::test_support::{CurrentDirGuard, TempDir};
 
 #[test]
 fn append_ignore_rejects_duplicates() {
@@ -82,34 +81,26 @@ fn toggle_root_allows_removing_only_root_when_directories_disabled() {
 #[test]
 #[cfg(unix)]
 fn toggle_root_matches_canonical_duplicates() {
-    let dir = unique_temp_dir("tmuxxer-setup-root");
+    let dir = TempDir::new("tmuxxer-setup-root");
     let alias = dir.join("alias");
-    std::os::unix::fs::symlink(&dir, &alias).unwrap();
+    std::os::unix::fs::symlink(dir.path(), &alias).unwrap();
 
-    let mut config = test_config(vec![dir.clone(), PathBuf::from("/tmp/other")]);
+    let mut config = test_config(vec![dir.path().to_path_buf(), PathBuf::from("/tmp/other")]);
 
     assert!(matches!(
         toggle_root(&mut config, alias).unwrap(),
         ToggleResult::Removed(_)
     ));
-
-    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
 fn normalize_ignore_cli_input_expands_dot_to_stored_path() {
-    let dir = unique_temp_dir("tmuxxer-setup");
-    let previous = env::current_dir().ok();
-    env::set_current_dir(&dir).unwrap();
+    let dir = TempDir::new("tmuxxer-setup");
+    let _cwd = CurrentDirGuard::change_to(dir.path());
 
-    let stored = normalize_ignore_cli_input(&dir, ".").unwrap();
+    let stored = normalize_ignore_cli_input(dir.path(), ".").unwrap();
 
-    assert_eq!(stored, config::stored_path(&dir));
-
-    if let Some(previous) = previous {
-        let _ = env::set_current_dir(previous);
-    }
-    let _ = fs::remove_dir_all(dir);
+    assert_eq!(stored, config::stored_path(dir.path()));
 }
 
 #[test]
@@ -129,11 +120,10 @@ fn normalize_ignore_cli_input_keeps_patterns() {
 fn optional_user_config_setup_warning_keeps_init_success() {
     let ui = TerminalUi::new();
 
-    assert!(handle_optional_user_config_setup_result(
-        &ui,
-        Err(io::Error::new(io::ErrorKind::Other, "binding failed"))
-    )
-    .is_ok());
+    assert!(
+        handle_optional_user_config_setup_result(&ui, Err(io::Error::other("binding failed")))
+            .is_ok()
+    );
 }
 
 #[test]
@@ -149,21 +139,11 @@ fn optional_user_config_setup_preserves_interruption() {
     assert_eq!(err.kind(), io::ErrorKind::Interrupted);
 }
 
-fn unique_temp_dir(prefix: &str) -> PathBuf {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let dir = env::temp_dir().join(format!("{prefix}-{}-{nanos}", std::process::id()));
-    fs::create_dir_all(&dir).unwrap();
-    dir
-}
-
 fn test_config(paths: Vec<PathBuf>) -> config::Config {
-    let mut config = config::Config::default();
-    config.search.roots = paths
-        .into_iter()
-        .map(|path| SearchRoot { path, depth: 1 })
-        .collect();
-    config
+    config::Config::with_roots(
+        paths
+            .into_iter()
+            .map(|path| SearchRoot { path, depth: 1 })
+            .collect(),
+    )
 }
