@@ -18,11 +18,18 @@ Docker is optional. When Docker is available and enabled in config, running cont
 cargo install --path .
 ```
 
-Or run without installing:
+This installs a durable `tmuxxer` executable that can be written safely into shell
+and tmux key bindings.
+
+For development or a quick trial, run commands through Cargo without installing:
 
 ```bash
-cargo run
+cargo run -- sessionize
 ```
+
+Permanent key binding setup through `tmuxxer init` or `tmuxxer user-config`
+requires an installed executable on `PATH`; Cargo build artifacts such as
+`target/debug/tmuxxer` are intentionally not written into dotfiles.
 
 ## Usage
 
