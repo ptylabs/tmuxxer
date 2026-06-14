@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::env;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
@@ -36,7 +37,9 @@ pub fn notice() -> Option<String> {
 
     let state = read_state().ok()?;
     let latest = state.latest_version.as_deref()?;
-    if state.dismissed_version.as_deref() == Some(latest) || !version_is_newer(latest, current_version()) {
+    if state.dismissed_version.as_deref() == Some(latest)
+        || !version_is_newer(latest, current_version())
+    {
         return None;
     }
 
@@ -313,10 +316,41 @@ fn version_is_newer(candidate: &str, current: &str) -> bool {
         }
     }
 
-    match (candidate.pre_release.as_deref(), current.pre_release.as_deref()) {
+    match (
+        candidate.pre_release.as_deref(),
+        current.pre_release.as_deref(),
+    ) {
         (None, Some(_)) => true,
         (Some(_), None) | (None, None) => false,
-        (Some(left), Some(right)) => left > right,
+        (Some(left), Some(right)) => compare_pre_release(left, right).is_gt(),
+    }
+}
+
+fn compare_pre_release(left: &str, right: &str) -> Ordering {
+    let mut left_parts = left.split('.');
+    let mut right_parts = right.split('.');
+
+    loop {
+        match (left_parts.next(), right_parts.next()) {
+            (Some(left), Some(right)) => {
+                let ordering = compare_pre_release_identifier(left, right);
+                if !ordering.is_eq() {
+                    return ordering;
+                }
+            }
+            (Some(_), None) => return Ordering::Greater,
+            (None, Some(_)) => return Ordering::Less,
+            (None, None) => return Ordering::Equal,
+        }
+    }
+}
+
+fn compare_pre_release_identifier(left: &str, right: &str) -> Ordering {
+    match (left.parse::<u64>(), right.parse::<u64>()) {
+        (Ok(left), Ok(right)) => left.cmp(&right),
+        (Ok(_), Err(_)) => Ordering::Less,
+        (Err(_), Ok(_)) => Ordering::Greater,
+        (Err(_), Err(_)) => left.cmp(right),
     }
 }
 
@@ -328,6 +362,7 @@ struct ParsedVersion {
 
 fn parse_version(value: &str) -> ParsedVersion {
     let value = normalize_version(value);
+    let value = value.split_once('+').map(|(core, _)| core).unwrap_or(value);
     let (core, pre_release) = value
         .split_once('-')
         .map(|(core, pre)| (core, Some(pre.to_string())))
