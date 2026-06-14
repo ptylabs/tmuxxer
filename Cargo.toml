@@ -1,8 +1,12 @@
 [package]
 name = "tmuxxer"
-version = "0.1.0-beta.3"
+version = "0.1.0-beta.4"
 edition = "2021"
 description = "Tmux power tools — sessionizer with fzf"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/ptylabs/tmuxxer"
+exclude = ["AGENTS.md"]
 
 [dependencies]
 serde = { version = "1.0.228", features = ["derive"] }
