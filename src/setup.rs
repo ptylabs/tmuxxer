@@ -127,7 +127,7 @@ pub fn run() -> io::Result<()> {
     }
     ui.section("Config written", &saved_lines);
 
-    run_user_config_setup_with_ui(&ui, false)?;
+    run_optional_user_config_setup_with_ui(&ui)?;
 
     Ok(())
 }
@@ -257,6 +257,26 @@ pub fn run_user_config_setup() -> io::Result<()> {
         ],
     );
     run_user_config_setup_with_ui(&ui, true)
+}
+
+fn run_optional_user_config_setup_with_ui(ui: &TerminalUi) -> io::Result<()> {
+    let result = run_user_config_setup_with_ui(ui, false);
+    handle_optional_user_config_setup_result(ui, result)
+}
+
+fn handle_optional_user_config_setup_result(
+    ui: &TerminalUi,
+    result: io::Result<()>,
+) -> io::Result<()> {
+    match result {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == io::ErrorKind::Interrupted => Err(e),
+        Err(e) => {
+            ui.warn(&format!("Optional key binding setup did not complete: {e}"));
+            ui.note("Run tmuxxer user-config later to retry optional key bindings.");
+            Ok(())
+        }
+    }
 }
 
 fn run_user_config_setup_with_ui(ui: &TerminalUi, include_docker_config: bool) -> io::Result<()> {

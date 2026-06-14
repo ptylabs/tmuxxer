@@ -1,4 +1,5 @@
 use super::*;
+use crate::terminal_ui::TerminalUi;
 use std::fs;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -122,6 +123,30 @@ fn normalize_ignore_cli_input_keeps_patterns() {
         normalize_ignore_cli_input(&home, "./folder/").unwrap(),
         "folder"
     );
+}
+
+#[test]
+fn optional_user_config_setup_warning_keeps_init_success() {
+    let ui = TerminalUi::new();
+
+    assert!(handle_optional_user_config_setup_result(
+        &ui,
+        Err(io::Error::new(io::ErrorKind::Other, "binding failed"))
+    )
+    .is_ok());
+}
+
+#[test]
+fn optional_user_config_setup_preserves_interruption() {
+    let ui = TerminalUi::new();
+
+    let err = handle_optional_user_config_setup_result(
+        &ui,
+        Err(io::Error::new(io::ErrorKind::Interrupted, "cancelled")),
+    )
+    .unwrap_err();
+
+    assert_eq!(err.kind(), io::ErrorKind::Interrupted);
 }
 
 fn unique_temp_dir(prefix: &str) -> PathBuf {
