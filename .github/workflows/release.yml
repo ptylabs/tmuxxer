@@ -1,0 +1,99 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            linker_env: ''
+            linker: ''
+          - target: aarch64-unknown-linux-gnu
+            linker_env: CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER
+            linker: aarch64-linux-gnu-gcc
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross linker
+        if: matrix.linker != ''
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Verify tag matches Cargo.toml
+        id: package
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])')
+          tag_version=${GITHUB_REF_NAME#v}
+          if [ "$tag_version" != "$version" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match Cargo.toml version $version" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Build release binary
+        env:
+          LINKER_ENV: ${{ matrix.linker_env }}
+          LINKER: ${{ matrix.linker }}
+        run: |
+          if [ -n "$LINKER_ENV" ]; then
+            export "$LINKER_ENV=$LINKER"
+          fi
+          cargo build --release --locked --target "${{ matrix.target }}"
+
+      - name: Package release asset
+        env:
+          VERSION: ${{ steps.package.outputs.version }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          asset="tmuxxer-$VERSION-$TARGET"
+          mkdir -p "dist/$asset"
+          cp "target/$TARGET/release/tmuxxer" "dist/$asset/tmuxxer"
+          cp LICENSE README.md "dist/$asset/"
+          tar -C "dist/$asset" -czf "dist/$asset.tar.gz" tmuxxer LICENSE README.md
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tmuxxer-${{ matrix.target }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: tmuxxer-*
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          cd dist
+          sha256sum tmuxxer-"$version"-*.tar.gz > "tmuxxer-$version-sha256sums.txt"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: tmuxxer ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          make_latest: ${{ contains(github.ref_name, '-') && 'false' || 'true' }}
+          files: dist/*

@@ -34,6 +34,9 @@ name_strategy = "path"
 [docker]
 new_session = true
 
+[updates]
+auto_check = true
+
 [search]
 ignore = ["target", ".git"]
 
@@ -58,6 +61,7 @@ Unknown TOML keys are rejected. `version` is optional and defaults to `2`, but a
 | `sources.docker` | boolean | `true` | `true`, `false` | Show running Docker containers in the picker when Docker is available. |
 | `session.name_strategy` | string | `"path"` | `"path"`, `"basename"` | Controls generated tmux session names for directory entries. |
 | `docker.new_session` | boolean | `true` | `true`, `false` | Open selected Docker containers in their own tmux sessions. When `false`, tmuxxer opens Docker shells directly in the current pane. |
+| `updates.auto_check` | boolean | `true` | `true`, `false` | Check for new tmuxxer releases in the background and show an update notice in the picker. |
 | `search.ignore` | string array | `[]` | patterns | Paths or path components to skip while scanning directory roots. |
 | `search.roots[].path` | string | none | path | Directory root to scan. `~` and `~/...` are expanded from `$HOME`. Required for each root. |
 | `search.roots[].depth` | integer | `1` | `1` or greater | Scan depth for a root. `0` is treated as `1`. |
@@ -130,6 +134,7 @@ sources.sessions
 sources.directories
 sources.docker
 docker.new_session
+updates.auto_check
 session.name_strategy
 ```
 

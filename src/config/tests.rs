@@ -22,6 +22,8 @@ fn toml_v2_parses_all_fields() {
          name_strategy = \"basename\"\n\n\
          [docker]\n\
          new_session = false\n\n\
+         [updates]\n\
+         auto_check = false\n\n\
          [search]\n\
          ignore = [\"target\", \".git\"]\n\n\
          [[search.roots]]\n\
@@ -35,6 +37,7 @@ fn toml_v2_parses_all_fields() {
     assert!(!config.sources.docker);
     assert_eq!(config.session.name_strategy, SessionNameStrategy::Basename);
     assert!(!config.docker.new_session);
+    assert!(!config.updates.auto_check);
     assert_eq!(config.search.ignores, vec!["target", ".git"]);
     assert_eq!(config.search.roots[0].path, PathBuf::from("/tmp/code"));
     assert_eq!(config.search.roots[0].depth, 3);
@@ -53,6 +56,7 @@ fn toml_v2_defaults_missing_optional_sections() {
     assert_eq!(config.sources, SourceConfig::default());
     assert_eq!(config.session, SessionConfig::default());
     assert_eq!(config.docker, DockerConfig::default());
+    assert_eq!(config.updates, UpdateConfig::default());
     assert_eq!(config.search.ignores, Vec::<String>::new());
     assert_eq!(config.search.roots[0].depth, 1);
 }
@@ -175,6 +179,7 @@ fn legacy_import_defaults_sources_to_enabled() {
     assert!(config.sources.docker);
     assert_eq!(config.session, SessionConfig::default());
     assert!(config.docker.new_session);
+    assert!(config.updates.auto_check);
 }
 
 #[test]
@@ -198,6 +203,7 @@ fn ignores_round_trip_through_save_and_load() {
     }]);
     config.search.ignores = vec!["target".to_string(), ".git".to_string()];
     config.docker.new_session = false;
+    config.updates.auto_check = false;
     config.session.name_strategy = SessionNameStrategy::Basename;
     config.sources.sessions = false;
 

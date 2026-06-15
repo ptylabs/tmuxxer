@@ -36,7 +36,7 @@ fn resolve_tmuxxer_from(
 
     Err(io::Error::new(
         io::ErrorKind::NotFound,
-        "permanent shell integration needs an installed/durable tmuxxer; run: cargo install --path .",
+        "permanent shell integration needs an installed/durable tmuxxer; run: curl -fsSL https://ptylabs.github.io/tmuxxer/install.sh | sh",
     ))
 }
 

@@ -11,6 +11,7 @@ pub const BOOL_SETTING_KEYS: &[&str] = &[
     "sources.directories",
     "sources.docker",
     "docker.new_session",
+    "updates.auto_check",
 ];
 pub const STRING_SETTING_KEYS: &[&str] = &["session.name_strategy"];
 
@@ -25,6 +26,7 @@ pub struct Config {
     pub sources: SourceConfig,
     pub session: SessionConfig,
     pub docker: DockerConfig,
+    pub updates: UpdateConfig,
     pub search: SearchConfig,
 }
 
@@ -114,6 +116,11 @@ pub struct DockerConfig {
     pub new_session: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct UpdateConfig {
+    pub auto_check: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionNameStrategy {
@@ -173,6 +180,7 @@ impl Config {
             "sources.directories" => Some(self.sources.directories),
             "sources.docker" => Some(self.sources.docker),
             "docker.new_session" => Some(self.docker.new_session),
+            "updates.auto_check" => Some(self.updates.auto_check),
             _ => None,
         }
     }
@@ -183,6 +191,7 @@ impl Config {
             "sources.directories" => self.sources.directories = value,
             "sources.docker" => self.sources.docker = value,
             "docker.new_session" => self.docker.new_session = value,
+            "updates.auto_check" => self.updates.auto_check = value,
             _ => return false,
         }
         true
@@ -223,6 +232,7 @@ impl Default for Config {
             },
             session: SessionConfig::default(),
             docker: DockerConfig::default(),
+            updates: UpdateConfig::default(),
             search: SearchConfig::default(),
         }
     }
@@ -258,6 +268,12 @@ impl Default for SourceConfig {
 impl Default for DockerConfig {
     fn default() -> Self {
         Self { new_session: true }
+    }
+}
+
+impl Default for UpdateConfig {
+    fn default() -> Self {
+        Self { auto_check: true }
     }
 }
 
@@ -322,6 +338,7 @@ fn format_config(config: &Config) -> Result<String, ConfigError> {
         sources: &config.sources,
         session: &config.session,
         docker: &config.docker,
+        updates: &config.updates,
         search: SearchTomlOut {
             ignore: config.search.ignores.clone(),
             roots,
@@ -375,12 +392,14 @@ fn parse_toml_content(content: &str) -> Result<Config, ConfigError> {
     let sources = raw.sources.map(Into::into).unwrap_or_default();
     let session = raw.session.map(Into::into).unwrap_or_default();
     let docker = raw.docker.map(Into::into).unwrap_or_default();
+    let updates = raw.updates.map(Into::into).unwrap_or_default();
     let search = raw.search.map(Into::into).unwrap_or_default();
 
     Ok(Config {
         sources,
         session,
         docker,
+        updates,
         search,
     })
 }
@@ -437,6 +456,7 @@ fn parse_legacy_content(content: &str) -> Result<Config, ConfigError> {
         docker: DockerConfig {
             new_session: docker_new_session,
         },
+        updates: UpdateConfig::default(),
         search: SearchConfig { roots, ignores },
     })
 }
@@ -496,6 +516,14 @@ impl From<DockerConfigTomlIn> for DockerConfig {
     }
 }
 
+impl From<UpdateConfigTomlIn> for UpdateConfig {
+    fn from(value: UpdateConfigTomlIn) -> Self {
+        Self {
+            auto_check: value.auto_check.unwrap_or(true),
+        }
+    }
+}
+
 impl From<SessionConfigTomlIn> for SessionConfig {
     fn from(value: SessionConfigTomlIn) -> Self {
         Self {
@@ -531,6 +559,7 @@ struct ConfigTomlIn {
     sources: Option<SourceConfigTomlIn>,
     session: Option<SessionConfigTomlIn>,
     docker: Option<DockerConfigTomlIn>,
+    updates: Option<UpdateConfigTomlIn>,
     search: Option<SearchConfigTomlIn>,
 }
 
@@ -546,6 +575,12 @@ struct SourceConfigTomlIn {
 #[serde(deny_unknown_fields)]
 struct DockerConfigTomlIn {
     new_session: Option<bool>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UpdateConfigTomlIn {
+    auto_check: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -576,6 +611,7 @@ struct ConfigTomlOut<'a> {
     sources: &'a SourceConfig,
     session: &'a SessionConfig,
     docker: &'a DockerConfig,
+    updates: &'a UpdateConfig,
     search: SearchTomlOut,
 }
 

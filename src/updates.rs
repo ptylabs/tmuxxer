@@ -3,8 +3,8 @@ use std::env;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::num::ParseIntError;
-use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Deserialize;
@@ -20,6 +20,7 @@ struct UpdateState {
     latest_version: Option<String>,
     latest_url: Option<String>,
     dismissed_version: Option<String>,
+    auto_check_disabled: bool,
 }
 
 #[derive(Debug, Error)]
@@ -129,16 +130,42 @@ struct GitHubRelease {
     tag_name: Option<String>,
     name: Option<String>,
     html_url: Option<String>,
+    #[serde(default)]
+    assets: Vec<GitHubAsset>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GitHubAsset {
+    name: Option<String>,
+    browser_download_url: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ReleaseAsset {
+    name: String,
+    url: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LatestRelease {
+    version: String,
+    url: String,
+    assets: Vec<ReleaseAsset>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum InstallMethod {
+    Cargo,
+    Script(PathBuf),
 }
 
 pub fn run(args: &[String]) -> io::Result<()> {
     match args {
-        [cmd] if cmd == "--check" || cmd == "check" => run_manual_check(),
-        [cmd] if cmd == "--dismiss" || cmd == "dismiss" => dismiss_available_update(),
-        [] => print_update_hint(),
+        [] => run_update(),
+        [cmd] if cmd == "--disable-auto" || cmd == "disable-auto" => disable_auto_updates(),
         _ => Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "usage: tmuxxer update [--check|--dismiss]",
+            "usage: tmuxxer update [--disable-auto]",
         )),
     }
 }
@@ -157,7 +184,7 @@ pub fn notice() -> Option<String> {
     }
 
     Some(format!(
-        "tmuxxer {latest} available - run: tmuxxer update --check"
+        "tmuxxer {latest} is available. Update with 'tmuxxer update' or disable automatic checks with 'tmuxxer update --disable-auto' or 'tmuxxer config set updates.auto_check false'."
     ))
 }
 
@@ -202,42 +229,477 @@ pub fn run_background_check() -> io::Result<()> {
     result
 }
 
-fn run_manual_check() -> io::Result<()> {
-    let (version, url) = fetch_latest_release()?;
+fn run_update() -> io::Result<()> {
+    let release = fetch_latest_release_details()?;
     let mut state = read_state().unwrap_or_default();
     state.last_check_at = now_secs();
-    state.latest_version = Some(version.clone());
-    state.latest_url = Some(url.clone());
+    state.latest_version = Some(release.version.clone());
+    state.latest_url = Some(release.url.clone());
     write_state(&state)?;
 
-    if version_is_newer(&version, current_version()) {
-        println!("tmuxxer {version} is available: {url}");
-    } else {
+    if !version_is_newer(&release.version, current_version()) {
         println!("tmuxxer is up to date ({})", current_version());
+        return Ok(());
+    }
+
+    println!(
+        "Updating tmuxxer {} -> {}",
+        current_version(),
+        release.version
+    );
+
+    match detect_install_method()? {
+        InstallMethod::Cargo => update_with_cargo(),
+        InstallMethod::Script(exe) => update_script_binary(&release, &exe),
+    }
+}
+
+fn disable_auto_updates() -> io::Result<()> {
+    let mut state = read_state().unwrap_or_default();
+    state.auto_check_disabled = true;
+    write_state(&state)?;
+
+    if let Ok(mut config) = crate::config::Config::load().map(|config| config.into_inner()) {
+        config.updates.auto_check = false;
+        config.save()?;
+        println!("Automatic update checks disabled in config.");
+    } else {
+        println!("Automatic update checks disabled.");
     }
 
     Ok(())
 }
 
-fn dismiss_available_update() -> io::Result<()> {
-    let mut state = read_state().unwrap_or_default();
-    let Some(version) = state.latest_version.clone() else {
-        println!("No cached update to dismiss.");
-        return Ok(());
+fn detect_install_method() -> io::Result<InstallMethod> {
+    let exe = crate::install::resolve_tmuxxer().or_else(|_| {
+        env::current_exe().and_then(|path| {
+            if path.is_absolute() {
+                Ok(path)
+            } else {
+                path.canonicalize()
+            }
+        })
+    })?;
+
+    if is_cargo_install_path(&exe) {
+        return Ok(InstallMethod::Cargo);
+    }
+
+    Ok(InstallMethod::Script(exe))
+}
+
+fn is_cargo_install_path(path: &Path) -> bool {
+    let mut paths = vec![path.to_path_buf()];
+    if let Ok(canonical) = path.canonicalize() {
+        if canonical != path {
+            paths.push(canonical);
+        }
+    }
+
+    paths.iter().any(|path| {
+        matches_cargo_home(path)
+            || cargo_root_from_bin(path).is_some_and(|root| {
+                root.join(".crates.toml").is_file() || root.join(".crates2.json").is_file()
+            })
+    })
+}
+
+fn matches_cargo_home(path: &Path) -> bool {
+    let cargo_home = env::var_os("CARGO_HOME")
+        .map(PathBuf::from)
+        .or_else(|| crate::config::home_dir().map(|home| home.join(".cargo")));
+    let Some(cargo_home) = cargo_home else {
+        return false;
     };
 
-    state.dismissed_version = Some(version.clone());
-    write_state(&state)?;
-    println!("Dismissed tmuxxer {version}.");
+    path == cargo_home.join("bin").join("tmuxxer")
+}
+
+fn cargo_root_from_bin(path: &Path) -> Option<PathBuf> {
+    if path.file_name().and_then(|name| name.to_str()) != Some("tmuxxer") {
+        return None;
+    }
+
+    let bin = path.parent()?;
+    if bin.file_name().and_then(|name| name.to_str()) != Some("bin") {
+        return None;
+    }
+
+    bin.parent().map(Path::to_path_buf)
+}
+
+fn update_with_cargo() -> io::Result<()> {
+    if !command_exists("cargo") {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "tmuxxer was installed with cargo, but cargo is not on PATH",
+        ));
+    }
+
+    let status = Command::new("cargo")
+        .args(["install", "tmuxxer"])
+        .status()?;
+    if status.success() {
+        println!("Updated tmuxxer with cargo.");
+        Ok(())
+    } else {
+        Err(io::Error::other(
+            "cargo install tmuxxer failed while updating tmuxxer",
+        ))
+    }
+}
+
+fn update_script_binary(release: &LatestRelease, exe: &Path) -> io::Result<()> {
+    let target = release_target().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::Unsupported,
+            "automatic binary updates are only supported for Linux x86_64, aarch64, and armv7",
+        )
+    })?;
+    let asset = find_release_asset(release, target).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            format!(
+                "release {} has no asset for {target}; update cannot continue from {}",
+                release.version, release.url
+            ),
+        )
+    })?;
+
+    let temp_dir = update_temp_dir(&release.version)?;
+    fs::create_dir_all(&temp_dir)?;
+    let archive = temp_dir.join(&asset.name);
+
+    download_to_file(&asset.url, &archive)?;
+    if let Some(checksum_asset) = find_checksum_asset(release) {
+        let checksums = temp_dir.join(&checksum_asset.name);
+        download_to_file(&checksum_asset.url, &checksums)?;
+        verify_archive_checksum(&checksums, &asset.name, &archive)?;
+    } else {
+        eprintln!(
+            "Warning: release {} has no checksum asset; continuing without verification.",
+            release.version
+        );
+    }
+    extract_archive(&archive, &temp_dir)?;
+    let extracted = find_extracted_tmuxxer(&temp_dir)?.ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "release asset {} did not contain a tmuxxer binary",
+                asset.name
+            ),
+        )
+    })?;
+
+    replace_executable(&extracted, exe)?;
+    let _ = fs::remove_dir_all(&temp_dir);
+    println!("Updated tmuxxer to {}.", release.version);
     Ok(())
 }
 
-fn print_update_hint() -> io::Result<()> {
-    if let Some(message) = notice() {
-        println!("{message}");
-    } else {
-        println!("Run 'tmuxxer update --check' to check for updates.");
+fn find_release_asset<'a>(release: &'a LatestRelease, target: &str) -> Option<&'a ReleaseAsset> {
+    let version = release.version.trim_start_matches('v');
+    let names = [
+        format!("tmuxxer-{version}-{target}.tar.gz"),
+        format!("tmuxxer-v{version}-{target}.tar.gz"),
+    ];
+
+    release
+        .assets
+        .iter()
+        .find(|asset| names.contains(&asset.name))
+}
+
+fn find_checksum_asset(release: &LatestRelease) -> Option<&ReleaseAsset> {
+    let version = release.version.trim_start_matches('v');
+    let names = [
+        format!("tmuxxer-{version}-sha256sums.txt"),
+        format!("tmuxxer-v{version}-sha256sums.txt"),
+        "SHA256SUMS".to_string(),
+        "sha256sums.txt".to_string(),
+    ];
+
+    release
+        .assets
+        .iter()
+        .find(|asset| names.contains(&asset.name))
+}
+
+fn release_target() -> Option<&'static str> {
+    match (env::consts::OS, env::consts::ARCH) {
+        ("linux", "x86_64") => Some("x86_64-unknown-linux-gnu"),
+        ("linux", "aarch64") => Some("aarch64-unknown-linux-gnu"),
+        ("linux", "arm") => Some("armv7-unknown-linux-gnueabihf"),
+        _ => None,
     }
+}
+
+fn download_to_file(url: &str, path: &Path) -> io::Result<()> {
+    if command_exists("curl") {
+        let status = Command::new("curl")
+            .args([
+                "--fail",
+                "--silent",
+                "--show-error",
+                "--location",
+                "--max-time",
+                "60",
+                "-H",
+                "User-Agent: tmuxxer-update",
+                "-o",
+                &path.display().to_string(),
+                url,
+            ])
+            .status()?;
+        if status.success() {
+            return Ok(());
+        }
+    }
+
+    if command_exists("wget") {
+        let status = Command::new("wget")
+            .args([
+                "--quiet",
+                "--timeout=60",
+                "--user-agent=tmuxxer-update",
+                "-O",
+                &path.display().to_string(),
+                url,
+            ])
+            .status()?;
+        if status.success() {
+            return Ok(());
+        }
+    }
+
+    Err(io::Error::new(
+        io::ErrorKind::NotFound,
+        "tmuxxer update needs curl or wget on PATH",
+    ))
+}
+
+fn verify_archive_checksum(checksums: &Path, asset_name: &str, archive: &Path) -> io::Result<()> {
+    let content = fs::read_to_string(checksums)?;
+    let expected = checksum_for_asset(&content, asset_name).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "{} does not contain a SHA256 entry for {asset_name}",
+                checksums.display()
+            ),
+        )
+    })?;
+
+    if !is_sha256_hex(expected) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid SHA256 digest for {asset_name}"),
+        ));
+    }
+
+    let actual = sha256_file(archive)?;
+    if actual.eq_ignore_ascii_case(expected) {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("checksum mismatch for {asset_name}"),
+        ))
+    }
+}
+
+fn checksum_for_asset<'a>(content: &'a str, asset_name: &str) -> Option<&'a str> {
+    content.lines().find_map(|line| {
+        let mut fields = line.split_whitespace();
+        let hash = fields.next()?;
+        let name = fields
+            .next()?
+            .trim_start_matches('*')
+            .trim_start_matches("./");
+
+        (name == asset_name).then_some(hash)
+    })
+}
+
+fn is_sha256_hex(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn sha256_file(path: &Path) -> io::Result<String> {
+    if command_exists("sha256sum") {
+        let output = Command::new("sha256sum").arg(path).output()?;
+        return first_output_field("sha256sum", output);
+    }
+
+    if command_exists("shasum") {
+        let output = Command::new("shasum")
+            .args(["-a", "256"])
+            .arg(path)
+            .output()?;
+        return first_output_field("shasum", output);
+    }
+
+    if command_exists("openssl") {
+        let output = Command::new("openssl")
+            .args(["dgst", "-sha256", "-r"])
+            .arg(path)
+            .output()?;
+        return first_output_field("openssl", output);
+    }
+
+    Err(io::Error::new(
+        io::ErrorKind::NotFound,
+        "checksum verification needs sha256sum, shasum, or openssl on PATH",
+    ))
+}
+
+fn first_output_field(command: &'static str, output: Output) -> io::Result<String> {
+    if !output.status.success() {
+        return Err(io::Error::other(format!("{command} failed")));
+    }
+
+    String::from_utf8_lossy(&output.stdout)
+        .split_whitespace()
+        .next()
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("{command} output was empty"),
+            )
+        })
+}
+
+fn extract_archive(archive: &Path, dir: &Path) -> io::Result<()> {
+    if !command_exists("tar") {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "tmuxxer update needs tar on PATH to unpack release assets",
+        ));
+    }
+
+    validate_archive_entries(archive)?;
+    let status = Command::new("tar")
+        .args([
+            "-xzf",
+            &archive.display().to_string(),
+            "-C",
+            &dir.display().to_string(),
+        ])
+        .status()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("failed to unpack {}", archive.display()),
+        ))
+    }
+}
+
+fn validate_archive_entries(archive: &Path) -> io::Result<()> {
+    let output = Command::new("tar")
+        .args(["-tzf", &archive.display().to_string()])
+        .output()?;
+    if !output.status.success() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("failed to list {}", archive.display()),
+        ));
+    }
+
+    for entry in String::from_utf8_lossy(&output.stdout).lines() {
+        if archive_entry_is_unsafe(entry) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("release asset contains unsafe path {entry:?}"),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn archive_entry_is_unsafe(entry: &str) -> bool {
+    entry.is_empty()
+        || entry.starts_with('/')
+        || entry == ".."
+        || entry.starts_with("../")
+        || entry.ends_with("/..")
+        || entry.contains("/../")
+}
+fn find_extracted_tmuxxer(dir: &Path) -> io::Result<Option<PathBuf>> {
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            if let Some(found) = find_extracted_tmuxxer(&path)? {
+                return Ok(Some(found));
+            }
+        } else if path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name == "tmuxxer")
+        {
+            return Ok(Some(path));
+        }
+    }
+
+    Ok(None)
+}
+
+fn replace_executable(source: &Path, destination: &Path) -> io::Result<()> {
+    let parent = destination.parent().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("cannot update {}", destination.display()),
+        )
+    })?;
+    let temp = parent.join(format!(".tmuxxer-update-{}", std::process::id()));
+
+    fs::copy(source, &temp).map_err(|error| {
+        if error.kind() == io::ErrorKind::PermissionDenied {
+            io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!(
+                    "cannot write {}; rerun with sufficient permissions",
+                    parent.display()
+                ),
+            )
+        } else {
+            error
+        }
+    })?;
+    make_executable(&temp)?;
+    fs::rename(&temp, destination).map_err(|error| {
+        let _ = fs::remove_file(&temp);
+        if error.kind() == io::ErrorKind::PermissionDenied {
+            io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!(
+                    "cannot replace {}; rerun with sufficient permissions",
+                    destination.display()
+                ),
+            )
+        } else {
+            error
+        }
+    })
+}
+
+#[cfg(unix)]
+fn make_executable(path: &Path) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut permissions = fs::metadata(path)?.permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(path, permissions)
+}
+
+#[cfg(not(unix))]
+fn make_executable(_path: &Path) -> io::Result<()> {
     Ok(())
 }
 
@@ -245,14 +707,24 @@ fn fetch_latest_release() -> Result<(String, String), UpdateError> {
     fetch_latest_release_with(&CommandReleaseFetcher)
 }
 
+fn fetch_latest_release_details() -> Result<LatestRelease, UpdateError> {
+    fetch_latest_release_details_with(&CommandReleaseFetcher)
+}
+
 fn fetch_latest_release_with(
     fetcher: &impl ReleaseFetcher,
 ) -> Result<(String, String), UpdateError> {
-    let body = fetcher.fetch(LATEST_RELEASE_URL)?;
-    parse_release(&body)
+    fetch_latest_release_details_with(fetcher).map(|release| (release.version, release.url))
 }
 
-fn parse_release(body: &str) -> Result<(String, String), UpdateError> {
+fn fetch_latest_release_details_with(
+    fetcher: &impl ReleaseFetcher,
+) -> Result<LatestRelease, UpdateError> {
+    let body = fetcher.fetch(LATEST_RELEASE_URL)?;
+    parse_release_details(&body)
+}
+
+fn parse_release_details(body: &str) -> Result<LatestRelease, UpdateError> {
     let release: GitHubRelease = serde_json::from_str(body)?;
     let version = release
         .tag_name
@@ -263,7 +735,23 @@ fn parse_release(body: &str) -> Result<(String, String), UpdateError> {
         .html_url
         .filter(|url| !url.trim().is_empty())
         .unwrap_or_else(|| RELEASES_URL.to_string());
-    Ok((normalize_version(&version).to_string(), url))
+    let assets = release
+        .assets
+        .into_iter()
+        .filter_map(|asset| {
+            Some(ReleaseAsset {
+                name: asset.name?.trim().to_string(),
+                url: asset.browser_download_url?.trim().to_string(),
+            })
+        })
+        .filter(|asset| !asset.name.is_empty() && !asset.url.is_empty())
+        .collect();
+
+    Ok(LatestRelease {
+        version: normalize_version(&version).to_string(),
+        url,
+        assets,
+    })
 }
 
 fn command_exists(command: &str) -> bool {
@@ -346,6 +834,9 @@ fn parse_state(content: &str) -> Result<UpdateState, UpdateError> {
             "latest_version" => state.latest_version = non_empty(value),
             "latest_url" => state.latest_url = non_empty(value),
             "dismissed_version" => state.dismissed_version = non_empty(value),
+            "auto_check_disabled" => {
+                state.auto_check_disabled = crate::config::parse_bool(value).unwrap_or(false);
+            }
             _ => {}
         }
     }
@@ -355,11 +846,12 @@ fn parse_state(content: &str) -> Result<UpdateState, UpdateError> {
 
 fn format_state(state: &UpdateState) -> String {
     format!(
-        "last_check_at = {}\nlatest_version = {}\nlatest_url = {}\ndismissed_version = {}\n",
+        "last_check_at = {}\nlatest_version = {}\nlatest_url = {}\ndismissed_version = {}\nauto_check_disabled = {}\n",
         state.last_check_at,
         state.latest_version.as_deref().unwrap_or(""),
         state.latest_url.as_deref().unwrap_or(""),
-        state.dismissed_version.as_deref().unwrap_or("")
+        state.dismissed_version.as_deref().unwrap_or(""),
+        state.auto_check_disabled
     )
 }
 
@@ -454,7 +946,17 @@ fn current_version() -> &'static str {
 }
 
 fn updates_disabled() -> bool {
-    env::var_os("TMUXXER_NO_UPDATE_CHECK").is_some()
+    if env::var_os("TMUXXER_NO_UPDATE_CHECK").is_some() {
+        return true;
+    }
+
+    if let Ok(config) = crate::config::Config::load() {
+        return !config.updates.auto_check;
+    }
+
+    read_state()
+        .map(|state| state.auto_check_disabled)
+        .unwrap_or(false)
 }
 
 fn state_path() -> PathBuf {
@@ -463,6 +965,14 @@ fn state_path() -> PathBuf {
 
 fn lock_path() -> PathBuf {
     state_dir().join("update-check.lock")
+}
+
+fn update_temp_dir(version: &str) -> io::Result<PathBuf> {
+    Ok(state_dir().join(format!(
+        "update-{}-{}",
+        normalize_version(version),
+        now_secs()
+    )))
 }
 
 fn state_dir() -> PathBuf {

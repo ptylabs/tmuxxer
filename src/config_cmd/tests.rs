@@ -18,6 +18,7 @@ fn format_list_includes_launch_settings_and_search_values() {
     assert!(output.contains("sources.sessions = true"));
     assert!(output.contains("sources.docker = false"));
     assert!(output.contains("docker.new_session = false"));
+    assert!(output.contains("updates.auto_check = true"));
     assert!(output.contains("session.name_strategy = \"path\""));
     assert!(output.contains("search.ignore = [\"target\", \".git\"]"));
     assert!(output.contains("search.roots[0].path = \"/tmp/code\""));
