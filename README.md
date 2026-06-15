@@ -1,184 +1,134 @@
 # tmuxxer
 
-Tmux power tools. A **sessionizer** that combines configured project folders, live tmux sessions, and running Docker containers in one `fzf` picker, then opens the selected target.
+Tmux power tools. `tmuxxer` is a sessionizer that combines configured project folders, live tmux sessions, and running Docker containers in one `fzf` picker.
 
-Inspired by [tmux-sessionizer](https://github.com/joshmedeski/tmux-sessionizer), with existing sessions listed alongside candidate directories.
+Inspired by [tmux-sessionizer](https://github.com/joshmedeski/tmux-sessionizer), with existing sessions and optional Docker containers listed alongside candidate directories.
 
 ## Requirements
 
 - [tmux](https://github.com/tmux/tmux) on `PATH`
 - [fzf](https://github.com/junegunn/fzf) on `PATH`
-- Rust toolchain (to build)
 
-If either tool is missing, tmuxxer exits with an error before doing anything else.
-
-Docker is optional. When `docker` is available and the daemon is reachable, running containers are included in the picker.
+Docker is optional. When Docker is available and enabled in config, running containers can appear in the picker.
+Rust is only required when building from source.
 
 ## Install
+
+Recommended install:
+
+```bash
+curl -fsSL https://ptylabs.github.io/tmuxxer/install.sh | sh
+```
+
+The installer downloads the latest stable GitHub Release for your Linux architecture,
+verifies its SHA256 checksum, and installs a durable binary to
+`~/.local/bin/tmuxxer`. If that directory is not on `PATH`, it prints the exact
+shell command to add it.
+
+Fallback URL if GitHub Pages is not enabled yet:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ptylabs/tmuxxer/main/docs/install.sh | sh
+```
+
+Installer environment overrides:
+
+```bash
+TMUXXER_INSTALL_DIR=/usr/local/bin sh docs/install.sh
+TMUXXER_VERSION=1.0.0 sh docs/install.sh
+TMUXXER_DEBUG=1 sh docs/install.sh
+```
+
+Alternative source install from crates.io, when published:
+
+```bash
+cargo install tmuxxer
+```
+
+Development install from a local checkout:
 
 ```bash
 cargo install --path .
 ```
 
-Or run without installing:
+For development or a quick trial, run commands through Cargo without installing:
 
 ```bash
-cargo run
+cargo run -- sessionize
 ```
+
+Permanent key binding setup through `tmuxxer init` or `tmuxxer user-config`
+requires an installed executable on `PATH`; Cargo build artifacts such as
+`target/debug/tmuxxer` are intentionally not written into dotfiles.
 
 ## Usage
 
 ```bash
-tmuxxer              # setup on first run, then fzf picker
-tmuxxer sessionize   # same
-tmuxxer init         # re-run setup and overwrite config
-tmuxxer user-config  # re-run tmux/bash integration setup
-tmuxxer --ignore     # append ignored paths or patterns
-tmuxxer --version    # print version (-v also works)
+tmuxxer              # setup on first run, then open the picker
+tmuxxer sessionize   # same as default
+tmuxxer s            # short alias for sessionize
+tmuxxer init         # re-run setup and rewrite project roots
+tmuxxer user-config  # configure Ctrl+F bindings and Docker behavior
+
+tmuxxer config path
+tmuxxer config list
+tmuxxer config get sources.docker
+tmuxxer config set sources.docker false
+tmuxxer config toggle sources.docker
+tmuxxer config validate
+tmuxxer config migrate
+
+tmuxxer --add ~/code        # toggle a search root
+tmuxxer --ignore target     # toggle an ignore pattern
+tmuxxer update                # update a script or Cargo install
+tmuxxer update --disable-auto # disable automatic update checks
+tmuxxer --version
 tmuxxer --help
 ```
 
-### First run
+## Picker Entries
 
-On the first invocation (no config file yet), tmuxxer runs a short CLI setup:
+- `[session] name` attaches or switches to an existing tmux session.
+- `[docker] name - image (id)` opens a shell inside a running container when Docker entries are enabled.
+- `[dir] label - /full/path` creates or switches to a directory session.
 
-1. **Dependency check** — fails fast if `tmux` or `fzf` are not installed.
-2. **Guided setup wizard**:
-   - Optional `[y/N]` prompt to include `~` as a search root.
-   - For each common folder found on disk (`~/code`, `~/work`, `~/projects`, `~/personal`, `~/dev`), a `[Y/n]` prompt to include it.
-   - Free-form loop to type any extra paths (`~` supported); blank line finishes.
-   - Per-folder scan depth prompts with a default of `1`.
-3. **Writes config** to `$XDG_CONFIG_HOME/tmuxxer/config` or `~/.config/tmuxxer/config`.
-4. **Session picker** — opens the fzf picker for normal use.
+Inside tmux, selected directory sessions use `tmux switch-client`. Outside tmux, tmuxxer creates or attaches to the target session.
 
-Run `tmuxxer init` anytime to redo this and overwrite the config.
-Run `tmuxxer user-config` anytime to reconfigure the tmux/bash bindings and Docker entry behavior. If a tmuxxer block is already present, it is updated in place instead of duplicated.
+## Configuration
 
-At the end of setup you can opt in to **Ctrl+F** bindings:
+Config lives at `$XDG_CONFIG_HOME/tmuxxer/config`, or `~/.config/tmuxxer/config` when `XDG_CONFIG_HOME` is not set.
 
-**bash** (default yes) — `~/.bashrc` sources the runtime config path:
+See [docs/config.md](docs/config.md) for every supported config flag, valid values, defaults, and migration notes.
+
+## Release assets
+
+The install script and `tmuxxer update` both consume GitHub Release assets named:
+
+```text
+tmuxxer-{version}-{target}.tar.gz
+tmuxxer-{version}-sha256sums.txt
+```
+
+`{version}` is the Cargo version without a leading `v`; the Git tag keeps the
+leading `v` (`v1.0.0` tag, `tmuxxer-1.0.0-x86_64-unknown-linux-gnu.tar.gz`
+asset). The release workflow currently builds:
+
+- `x86_64-unknown-linux-gnu`
+- `aarch64-unknown-linux-gnu`
+
+To publish the installer URL, enable GitHub Pages from repository
+Settings → Pages → Deploy from a branch → `main` / `docs`. First release:
 
 ```bash
-# >>> tmuxxer >>>
-if [[ $- == *i* ]]; then
-  _tmuxxer_bind="${XDG_CONFIG_HOME:-$HOME/.config}/tmuxxer/bash-bind.sh"
-  [[ -r "$_tmuxxer_bind" ]] && source "$_tmuxxer_bind"
-  unset _tmuxxer_bind
-fi
-# <<< tmuxxer <<<
+cargo test --locked
+git tag v1.0.0
+git push origin v1.0.0
 ```
 
-The sourced `bash-bind.sh` binds interactive Bash shells both inside and outside tmux:
+After the workflow finishes, verify the release contains both tarballs and
+`tmuxxer-1.0.0-sha256sums.txt`, then verify:
 
 ```bash
-_tmuxxer_sessionize() {
-  '/path/to/tmuxxer' sessionize
-}
-bind -x '"\C-f": "_tmuxxer_sessionize"'
+curl -fsSL https://ptylabs.github.io/tmuxxer/install.sh | sh
+tmuxxer --version
 ```
-
-**tmux passthrough** (default yes when the Bash binding exists) — written to the user tmux config file tmux is loading, or `~/.tmux.conf` if none exists yet:
-
-```tmux
-# >>> tmuxxer >>>
-bind-key -n C-f send-keys C-f
-# <<< tmuxxer <<<
-```
-
-The tmux binding forwards Ctrl+F into the current pane. In interactive Bash shells, the Bash binding handles that key and runs tmuxxer without typing a command into the prompt. If another full-screen program is active in the pane, tmux forwards Ctrl+F to that program.
-
-After writing the binding, setup asks whether to reload tmux immediately. If tmux is not running yet or reload fails, run `tmux source-file <that file>` after starting tmux.
-
-Re-running `tmuxxer init` and accepting the prompt updates that block in place (no duplicates).
-`tmuxxer user-config` does the same without touching the project search paths. It can also toggle Docker entries between opening in a new tmux session and opening directly in the current pane.
-
-After writing the Bash binding, new interactive Bash shells pick it up automatically. The current shell cannot be modified by `tmuxxer init`; run `source ~/.bashrc` there if you want Ctrl+F without opening a new shell.
-
-### Ignoring paths
-
-Run `tmuxxer --ignore` after setup to append ignored path or component patterns to the config. Pass paths on the command line to toggle them without the interactive prompt, for example `tmuxxer --ignore ./folder/` adds the ignore and running it again removes it.
-
-Run `tmuxxer --add ~/code` to toggle a search root without re-running init.
-
-These commands only need the config file; they do not require `tmux` or `fzf`.
-
-Examples:
-
-```ini
-ignore = target
-ignore = .git
-ignore = .*
-ignore = node_modules/*
-ignore = ~/work/tmp
-```
-
-Matching rules:
-
-- no slash: matches any path component, with `*` supported, e.g. `.*`, `target`
-- slash without leading `/`: matches relative paths anywhere below each search root, e.g. `node_modules/*`
-- leading `~/` or `/`: matches from that absolute path prefix
-
-### Session picker
-
-The picker uses `fzf --height=80% --layout=reverse --border` both inside and outside tmux, so it appears as the same compact panel instead of switching between tmux popup and fullscreen modes.
-
-- `[session] name` — attach or switch to an existing tmux session
-- `[docker] name — image (id)` — create or attach a tmux session running a shell inside that container
-- `[dir] label — /full/path` — create a session named from the folder basename (`.` → `_`) and attach
-
-**Session naming**
-
-The session name is the directory basename with dots replaced by underscores (tmux treats `.` specially in targets).
-Docker session names are prefixed with `docker_` and derived from the container name, with non-session-friendly characters replaced by `_`. This only applies when `docker_new_session = true`.
-
-**Attach behavior**
-
-- Outside tmux, no server: `tmux new-session -s NAME -c DIR` (creates and attaches)
-- Outside tmux, server running: create detached if missing, then `tmux attach`
-- Inside tmux: create detached if missing, then `tmux switch-client`
-- Docker containers: by default, create or reuse a tmux session running `docker exec -it CONTAINER SHELL`, preferring the container's `SHELL` env when it points to a supported shell, then common shells such as `bash`, `sh`, and `ash`
-- With `docker_new_session = false`, Docker containers open directly in the current pane instead of a new tmux session
-
-## Config
-
-`$XDG_CONFIG_HOME/tmuxxer/config` if `XDG_CONFIG_HOME` is set, otherwise `~/.config/tmuxxer/config`.
-
-Created by the first-run wizard (or `tmuxxer init`). Simple `key = value` format:
-
-```ini
-# Generated by tmuxxer setup
-
-docker_new_session = true
-
-path = ~/code
-depth = 1
-
-path = ~/work
-depth = 3
-
-ignore = target
-```
-
-- `path` — search root (repeatable)
-- `depth` — how deep to scan under the preceding path (1 = immediate children only)
-- `docker_new_session` — `true` by default; set to `false` to open Docker directly in the current pane. Edit directly or run `tmuxxer user-config` to change it
-- `ignore` — path or component pattern to skip while scanning, with simple gitignore-like `*` matching
-
-Edit the file by hand anytime; use `tmuxxer init` to reconfigure paths interactively. Existing `ignore` and `docker_new_session` entries are preserved when setup rewrites roots.
-
-## Project layout
-
-```
-src/
-  main.rs         CLI entry
-  deps.rs         tmux/fzf presence check
-  docker.rs       Docker container listing / shell command
-  config.rs       Config load / save
-  setup.rs        First-run CLI prompts
-  bashrc.rs       Optional Ctrl+F bashrc block
-  fzf.rs          fzf integration
-  tmux.rs         tmux command wrappers
-  sessionizer.rs  Collect, pick, create/attach
-```
-
-no dependencies yet.

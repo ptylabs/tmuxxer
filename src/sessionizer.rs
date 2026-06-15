@@ -4,7 +4,7 @@ use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf};
 
-use crate::config::Config;
+use crate::config::{Config, SessionNameStrategy};
 use crate::docker;
 use crate::fzf;
 use crate::tmux;
@@ -22,9 +22,28 @@ enum Entry {
 
 pub fn run() -> io::Result<()> {
     let config = Config::load()?;
-    let (lines, map) = collect_entries(&config)?;
+    run_with(
+        config.as_config(),
+        &tmux::SystemTmux,
+        &docker::SystemDocker,
+        &fzf::FzfPicker,
+    )
+}
 
-    let Some(selection) = fzf::pick(&lines) else {
+fn run_with<T, D, P>(
+    config: &Config,
+    tmux_client: &T,
+    docker_client: &D,
+    picker: &P,
+) -> io::Result<()>
+where
+    T: tmux::TmuxCommand,
+    D: docker::DockerCommand,
+    P: fzf::Picker,
+{
+    let (lines, map) = collect_entries_with(config, tmux_client, docker_client)?;
+
+    let Some(selection) = picker.pick(&lines)? else {
         return Ok(());
     };
 
@@ -33,49 +52,78 @@ pub fn run() -> io::Result<()> {
         .ok_or_else(|| io::Error::other("invalid selection"))?;
 
     match entry {
-        Entry::Session(name) => attach_session(name),
-        Entry::Dir(path) => sessionize_dir(path),
-        Entry::Docker(container) => open_docker(container, config.docker_new_session),
+        Entry::Session(name) => attach_session(tmux_client, name),
+        Entry::Dir(path) => sessionize_dir(tmux_client, path, config.session.name_strategy),
+        Entry::Docker(container) => open_docker(
+            tmux_client,
+            docker_client,
+            container,
+            config.docker.new_session,
+        ),
     }
 }
 
-fn collect_entries(config: &Config) -> io::Result<(Vec<String>, HashMap<String, Entry>)> {
+fn collect_entries_with<T, D>(
+    config: &Config,
+    tmux_client: &T,
+    docker_client: &D,
+) -> io::Result<(Vec<String>, HashMap<String, Entry>)>
+where
+    T: tmux::TmuxCommand,
+    D: docker::DockerCommand,
+{
+    config.validate()?;
+
     let mut lines = Vec::new();
     let mut map = HashMap::new();
     let ignore_rules: Vec<IgnoreRule> = config
+        .search
         .ignores
         .iter()
         .map(|ignore| IgnoreRule::new(ignore))
         .collect();
 
-    for name in tmux::sessions() {
-        let display = format!("{SESSION_PREFIX}{name}");
-        map.insert(display.clone(), Entry::Session(name));
-        lines.push(display);
-    }
-
-    for container in docker::containers() {
-        let display = format!(
-            "{DOCKER_PREFIX}{} — {} ({})",
-            container.name, container.image, container.id
-        );
-        map.insert(display.clone(), Entry::Docker(container));
-        lines.push(display);
-    }
-
-    let mut dirs = Vec::new();
-    for root in &config.roots {
-        if root.path.is_dir() && !is_ignored(&root.path, &root.path, &ignore_rules) {
-            collect_dirs(&root.path, &root.path, root.depth, &ignore_rules, &mut dirs);
+    if config.sources.sessions {
+        for name in tmux_client.sessions() {
+            let display = format!("{SESSION_PREFIX}{name}");
+            map.insert(display.clone(), Entry::Session(name));
+            lines.push(display);
         }
     }
-    dirs.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
 
-    for path in dirs {
-        let label = path.file_name().and_then(OsStr::to_str).unwrap_or("?");
-        let display = format!("{DIR_PREFIX}{label} — {}", path.display());
-        map.insert(display.clone(), Entry::Dir(path));
-        lines.push(display);
+    if config.sources.docker {
+        for container in docker_client.containers() {
+            let display = format!(
+                "{DOCKER_PREFIX}{} — {} ({})",
+                container.name, container.image, container.id
+            );
+            map.insert(display.clone(), Entry::Docker(container));
+            lines.push(display);
+        }
+    }
+
+    if config.sources.directories {
+        let mut dirs = Vec::new();
+        for root in &config.search.roots {
+            if root.path.is_dir() && !is_ignored(&root.path, &root.path, &ignore_rules) {
+                collect_dirs(&root.path, &root.path, root.depth, &ignore_rules, &mut dirs);
+            }
+        }
+        dirs.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
+
+        for path in dirs {
+            let label = path.file_name().and_then(OsStr::to_str).unwrap_or("?");
+            let display = format!("{DIR_PREFIX}{label} — {}", path.display());
+            map.insert(display.clone(), Entry::Dir(path));
+            lines.push(display);
+        }
+    }
+
+    if lines.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "no entries found for enabled picker sources",
+        ));
     }
 
     Ok((lines, map))
@@ -288,64 +336,99 @@ fn wildcard_match(pattern: &str, text: &str) -> bool {
     pattern_index == pattern.len()
 }
 
-fn attach_session(name: &str) -> io::Result<()> {
-    if tmux::inside_tmux() {
-        tmux::switch_client(name)
+fn attach_session<T: tmux::TmuxCommand>(tmux_client: &T, name: &str) -> io::Result<()> {
+    if tmux_client.inside_tmux() {
+        tmux_client.switch_client(name)?;
     } else {
-        tmux::attach(name)
+        tmux_client.attach(name)?;
     }
+    Ok(())
 }
 
-fn sessionize_dir(dir: &Path) -> io::Result<()> {
-    let name = session_name_from_dir(dir);
+fn sessionize_dir<T: tmux::TmuxCommand>(
+    tmux_client: &T,
+    dir: &Path,
+    name_strategy: SessionNameStrategy,
+) -> io::Result<()> {
+    let base_name = session_name_from_dir(dir, name_strategy);
 
-    if !tmux::inside_tmux() && !tmux::server_running() {
-        tmux::new_session(&name, dir, false)?;
+    if !tmux_client.inside_tmux() && !tmux_client.server_running() {
+        tmux_client.new_session(&base_name, dir, false)?;
         return Ok(());
     }
 
-    if !tmux::has_session(&name) {
-        tmux::new_session(&name, dir, true)?;
+    let name = match name_strategy {
+        SessionNameStrategy::Basename => base_name,
+        SessionNameStrategy::Path => available_session_name(&base_name, &tmux_client.sessions()),
+    };
+
+    if !tmux_client.has_session(&name) {
+        tmux_client.new_session(&name, dir, true)?;
     }
 
-    if tmux::inside_tmux() {
-        tmux::switch_client(&name)
+    if tmux_client.inside_tmux() {
+        tmux_client.switch_client(&name)?;
     } else {
-        tmux::attach(&name)
+        tmux_client.attach(&name)?;
     }
+    Ok(())
 }
 
-fn open_docker(container: &docker::Container, new_session: bool) -> io::Result<()> {
+fn open_docker<T, D>(
+    tmux_client: &T,
+    docker_client: &D,
+    container: &docker::Container,
+    new_session: bool,
+) -> io::Result<()>
+where
+    T: tmux::TmuxCommand,
+    D: docker::DockerCommand,
+{
     if new_session {
-        sessionize_docker(container)
+        sessionize_docker(tmux_client, docker_client, container)
     } else {
-        docker::exec_shell(container)
+        docker_client.exec_shell(container)?;
+        Ok(())
     }
 }
 
-fn sessionize_docker(container: &docker::Container) -> io::Result<()> {
+fn sessionize_docker<T, D>(
+    tmux_client: &T,
+    docker_client: &D,
+    container: &docker::Container,
+) -> io::Result<()>
+where
+    T: tmux::TmuxCommand,
+    D: docker::DockerCommand,
+{
     let name = session_name_from_docker(container);
-    let command = docker::shell_command(container);
+    let command = docker_client.shell_command(container);
 
-    if !tmux::inside_tmux() && !tmux::server_running() {
-        tmux::new_session_with_command(&name, &command, false)?;
+    if !tmux_client.inside_tmux() && !tmux_client.server_running() {
+        tmux_client.new_session_with_command(&name, &command, false)?;
         return Ok(());
     }
 
-    if !tmux::has_session(&name) {
-        tmux::new_session_with_command(&name, &command, true)?;
+    if !tmux_client.has_session(&name) {
+        tmux_client.new_session_with_command(&name, &command, true)?;
     }
 
-    if tmux::inside_tmux() {
-        tmux::switch_client(&name)
+    if tmux_client.inside_tmux() {
+        tmux_client.switch_client(&name)?;
     } else {
-        tmux::attach(&name)
+        tmux_client.attach(&name)?;
     }
+    Ok(())
 }
 
-fn session_name_from_dir(dir: &Path) -> String {
+fn session_name_from_dir(dir: &Path, name_strategy: SessionNameStrategy) -> String {
     let base = dir.file_name().and_then(OsStr::to_str).unwrap_or("session");
-    base.replace('.', "_")
+    let base = base.replace('.', "_");
+
+    match name_strategy {
+        SessionNameStrategy::Basename => base,
+        SessionNameStrategy::Path => sanitize_session_name_part(&base),
+    }
 }
 
 fn session_name_from_docker(container: &docker::Container) -> String {
@@ -364,97 +447,39 @@ fn session_name_from_docker(container: &docker::Container) -> String {
     format!("docker_{name}")
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn ignore_exact_component_matches_any_path_component() {
-        let rules = ignore_rules(&["target"]);
-        let root = Path::new("/tmp/work");
-
-        assert!(is_ignored(root, Path::new("/tmp/work/app/target"), &rules));
-        assert!(is_ignored(
-            root,
-            Path::new("/tmp/work/app/target/debug"),
-            &rules
-        ));
-        assert!(!is_ignored(root, Path::new("/tmp/work/app/src"), &rules));
+fn available_session_name(base: &str, existing: &[String]) -> String {
+    if !existing.iter().any(|name| name == base) {
+        return base.to_string();
     }
 
-    #[test]
-    fn ignore_wildcard_component_matches_dot_directories() {
-        let rules = ignore_rules(&[".*"]);
-        let root = Path::new("/tmp/work");
-
-        assert!(is_ignored(root, Path::new("/tmp/work/app/.git"), &rules));
-        assert!(!is_ignored(root, Path::new("/tmp/work/app/src"), &rules));
-    }
-
-    #[test]
-    fn ignore_tilde_path_prefix_matches_descendants() {
-        let Some(home) = crate::config::home_dir() else {
-            return;
-        };
-        let root = home.join("work");
-        let ignored = home.join("work/tmp/project");
-        let allowed = home.join("work/src/project");
-        let rules = ignore_rules(&["~/work/tmp"]);
-
-        assert!(is_ignored(&root, &ignored, &rules));
-        assert!(!is_ignored(&root, &allowed, &rules));
-    }
-
-    #[test]
-    fn ignore_relative_path_pattern_matches_at_any_depth() {
-        let rules = ignore_rules(&["node_modules/*"]);
-        let root = Path::new("/tmp/work");
-
-        assert!(is_ignored(
-            root,
-            Path::new("/tmp/work/app/node_modules/typescript"),
-            &rules
-        ));
-        assert!(is_ignored(
-            root,
-            Path::new("/tmp/work/node_modules/esbuild"),
-            &rules
-        ));
-        assert!(!is_ignored(
-            root,
-            Path::new("/tmp/work/app/src/node_modulesx/typescript"),
-            &rules
-        ));
-    }
-
-    #[test]
-    fn ignore_dot_slash_relative_pattern_matches_at_any_depth() {
-        let rules = ignore_rules(&["./folder/"]);
-        let root = Path::new("/tmp/work");
-
-        assert!(is_ignored(
-            root,
-            Path::new("/tmp/work/app/folder/sub"),
-            &rules
-        ));
-        assert!(!is_ignored(root, Path::new("/tmp/work/app/src"), &rules));
-    }
-
-    #[test]
-    fn docker_session_names_are_prefixed_and_sanitized() {
-        let container = docker::Container {
-            id: "c22bd1e7a321".to_string(),
-            name: "api.web/1".to_string(),
-            image: "app:latest".to_string(),
-        };
-
-        assert_eq!(session_name_from_docker(&container), "docker_api_web_1");
-    }
-
-    fn ignore_rules(patterns: &[&str]) -> Vec<IgnoreRule> {
-        patterns
-            .iter()
-            .map(|pattern| IgnoreRule::new(pattern))
-            .collect()
+    let mut index = 2usize;
+    loop {
+        let candidate = format!("{base}-{index}");
+        if !existing.iter().any(|name| name == &candidate) {
+            return candidate;
+        }
+        index += 1;
     }
 }
+
+fn sanitize_session_name_part(value: &str) -> String {
+    let sanitized = value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+
+    if sanitized.chars().any(|ch| ch != '_') {
+        sanitized
+    } else {
+        "session".to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests;
