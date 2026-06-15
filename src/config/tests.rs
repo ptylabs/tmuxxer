@@ -124,6 +124,25 @@ fn toml_v2_rejects_unknown_keys() {
     .unwrap_err();
 
     assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    let message = err.to_string();
+    assert!(message.contains("bad config: TOML parse error at line 2"));
+    assert!(message.contains("unknown field `surprise`"));
+    assert!(message.contains("tmuxxer init"));
+    assert!(message.contains("tmuxxer user-config"));
+}
+
+#[test]
+fn toml_parse_error_mentions_config_path_when_loaded_from_file() {
+    let dir = TempDir::new("tmuxxer-bad-config");
+    let path = dir.join("config");
+    fs::write(&path, "version = 2\n\n[unknown]\nvalue = true\n").unwrap();
+
+    let err = parse_file(&path).unwrap_err();
+
+    let message = err.to_string();
+    assert!(message.contains(&path.display().to_string()));
+    assert!(message.contains("line 3"));
+    assert!(message.contains("tmuxxer init"));
 }
 
 #[test]

@@ -4,7 +4,6 @@ use std::fs;
 use std::io;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
-use thiserror::Error;
 
 pub const BOOL_SETTING_KEYS: &[&str] = &[
     "sources.sessions",
@@ -58,24 +57,94 @@ impl Deref for ValidatedConfig {
     }
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug)]
 pub enum ConfigError {
-    #[error("config not found at {path}")]
-    NotFound { path: String },
-    #[error("all picker sources are disabled")]
+    NotFound {
+        path: String,
+    },
     AllSourcesDisabled,
-    #[error("config has no search roots while sources.directories is true")]
     DirectoriesNeedRoots,
-    #[error("unsupported config version {0}")]
     UnsupportedVersion(u8),
-    #[error("invalid {key}: {value} (expected true or false)")]
-    InvalidBool { key: String, value: String },
-    #[error("TOML parse error: {0}")]
-    TomlParse(#[from] toml::de::Error),
-    #[error("TOML serialize error: {0}")]
-    TomlSerialize(#[from] toml::ser::Error),
-    #[error(transparent)]
-    Io(#[from] io::Error),
+    InvalidBool {
+        key: String,
+        value: String,
+    },
+    TomlParse {
+        path: Option<String>,
+        source: toml::de::Error,
+    },
+    TomlSerialize(toml::ser::Error),
+    Io(io::Error),
+}
+
+impl std::fmt::Display for ConfigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotFound { path } => write!(f, "config not found at {path}"),
+            Self::AllSourcesDisabled => {
+                writeln!(f, "bad config: all picker sources are disabled")?;
+                write_repair_hint(f)
+            }
+            Self::DirectoriesNeedRoots => {
+                writeln!(
+                    f,
+                    "bad config: sources.directories is true but no search roots are configured"
+                )?;
+                write_repair_hint(f)
+            }
+            Self::UnsupportedVersion(version) => {
+                writeln!(f, "bad config: unsupported config version {version}")?;
+                write_repair_hint(f)
+            }
+            Self::InvalidBool { key, value } => {
+                writeln!(
+                    f,
+                    "bad config: invalid {key}: {value} (expected true or false)"
+                )?;
+                write_repair_hint(f)
+            }
+            Self::TomlParse { path, source } => {
+                if let Some(path) = path {
+                    writeln!(f, "bad config at {path}: {source}")?;
+                } else {
+                    writeln!(f, "bad config: {source}")?;
+                }
+                write_repair_hint(f)
+            }
+            Self::TomlSerialize(error) => write!(f, "TOML serialize error: {error}"),
+            Self::Io(error) => write!(f, "{error}"),
+        }
+    }
+}
+
+impl std::error::Error for ConfigError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::TomlParse { source, .. } => Some(source),
+            Self::TomlSerialize(error) => Some(error),
+            Self::Io(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
+impl From<toml::ser::Error> for ConfigError {
+    fn from(error: toml::ser::Error) -> Self {
+        Self::TomlSerialize(error)
+    }
+}
+
+impl From<io::Error> for ConfigError {
+    fn from(error: io::Error) -> Self {
+        Self::Io(error)
+    }
+}
+
+fn write_repair_hint(f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(
+        f,
+        "\nFix it with `tmuxxer init` to rewrite the config. Then run `tmuxxer user-config` to refresh optional Ctrl+F bindings."
+    )
 }
 
 impl ConfigError {
@@ -87,7 +156,7 @@ impl ConfigError {
             | Self::DirectoriesNeedRoots
             | Self::UnsupportedVersion(_)
             | Self::InvalidBool { .. }
-            | Self::TomlParse(_)
+            | Self::TomlParse { .. }
             | Self::TomlSerialize(_) => io::ErrorKind::InvalidData,
         }
     }
@@ -351,12 +420,19 @@ fn format_config(config: &Config) -> Result<String, ConfigError> {
 }
 
 fn parse_file(path: &Path) -> Result<ValidatedConfig, ConfigError> {
-    parse_content(&fs::read_to_string(path)?)
+    parse_content_with_path(&fs::read_to_string(path)?, Some(path))
 }
 
+#[cfg(test)]
 fn parse_content(content: &str) -> Result<ValidatedConfig, ConfigError> {
+    parse_content_with_path(content, None)
+}
+fn parse_content_with_path(
+    content: &str,
+    path: Option<&Path>,
+) -> Result<ValidatedConfig, ConfigError> {
     let config = if looks_like_toml(content) {
-        parse_toml_content(content)?
+        parse_toml_content(content, path)?
     } else {
         parse_legacy_content(content)?
     };
@@ -381,8 +457,11 @@ fn looks_like_toml(content: &str) -> bool {
     false
 }
 
-fn parse_toml_content(content: &str) -> Result<Config, ConfigError> {
-    let raw: ConfigTomlIn = toml::from_str(content)?;
+fn parse_toml_content(content: &str, path: Option<&Path>) -> Result<Config, ConfigError> {
+    let raw: ConfigTomlIn = toml::from_str(content).map_err(|source| ConfigError::TomlParse {
+        path: path.map(|path| path.display().to_string()),
+        source,
+    })?;
 
     let version = raw.version.unwrap_or(2);
     if version != 2 {

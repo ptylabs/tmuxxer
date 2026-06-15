@@ -100,6 +100,11 @@ pub fn run() -> io::Result<()> {
     let mut next_config = match config::Config::load() {
         Ok(config) => config.into_inner(),
         Err(e) if e.kind() == io::ErrorKind::NotFound => config::Config::default(),
+        Err(e) if e.kind() == io::ErrorKind::InvalidData => {
+            ui.warn("Existing config is invalid; tmuxxer init will rewrite it.");
+            ui.note(&e.to_string());
+            config::Config::default()
+        }
         Err(e) => return Err(e.into()),
     };
     let preserved_ignores = next_config.search.ignores.len();
@@ -367,6 +372,11 @@ fn run_docker_config_setup(ui: &TerminalUi) -> io::Result<()> {
         Err(e) if e.kind() == io::ErrorKind::NotFound => {
             ui.warn("Docker behavior needs a tmuxxer config file.");
             ui.note("Run tmuxxer init first, or edit the config file after it exists.");
+            return Ok(());
+        }
+        Err(e) if e.kind() == io::ErrorKind::InvalidData => {
+            ui.warn("Docker settings were skipped because the tmuxxer config is invalid.");
+            ui.note(&e.to_string());
             return Ok(());
         }
         Err(e) => return Err(e),
