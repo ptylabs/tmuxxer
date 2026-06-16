@@ -1,4 +1,4 @@
-# ⚡ tmuxxer
+# 🦀 tmuxxer
 
 **Sessionize everything. Ctrl+f into your folders, dockers, sessions...**
 
