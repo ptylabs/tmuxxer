@@ -222,7 +222,7 @@ proptest! {
 
         let mut partial = root.to_path_buf();
         for part in before {
-            partial.push(part);
+            partial.push(format!("Allowed{part}"));
         }
         partial.push(format!("{parent}x"));
         partial.push(child);
