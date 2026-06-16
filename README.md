@@ -36,10 +36,10 @@ Install and compile from crates.io:
 cargo install tmuxxer
 ```
 
-Binary install: 
+Or curl to install the binary: 
 
 ```bash
-curl -fsSL [https://ptylabs.github.io/tmuxxer/install.sh](https://ptylabs.github.io/tmuxxer/install.sh) | sh
+curl -fsSL https://ptylabs.github.io/tmuxxer/install.sh | sh
 ```
 
 [View installation script here](https://raw.githubusercontent.com/ptylabs/tmuxxer/main/docs/install.sh)
