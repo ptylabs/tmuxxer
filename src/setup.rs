@@ -2,8 +2,8 @@ use std::env;
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
-use crate::bashrc;
 use crate::config::{self, SearchRoot};
+use crate::shell_config::{self, Shell};
 use crate::terminal_ui::TerminalUi;
 use crate::tmux_conf;
 
@@ -257,7 +257,7 @@ pub fn run_user_config_setup() -> io::Result<()> {
         "tmuxxer user-config",
         "Install optional Ctrl+F shortcuts for the picker.",
         &[
-            "bash binding: runs tmuxxer in interactive Bash shells.",
+            "shell binding: runs tmuxxer in supported interactive shells.",
             "tmux passthrough: forwards Ctrl+F to the current pane.",
             "Docker entries: choose picker visibility and opening behavior.",
         ],
@@ -286,31 +286,53 @@ fn handle_optional_user_config_setup_result(
 }
 
 fn run_user_config_setup_with_ui(ui: &TerminalUi, include_docker_config: bool) -> io::Result<()> {
-    ui.section(
-        "Key bindings",
-        &[
-            "Ctrl+F can open the tmuxxer picker from shell prompts in tmux and Bash.",
-            "Inside tmux, Bash handles the picker so the command is not typed into the pane.",
-            "Existing tmuxxer blocks are updated in place.",
-        ],
-    );
-
-    let bash_was_configured = bashrc::has_ctrl_f_binding()?;
-    let bash_added = if prompt_yes_no(ui, "Add Ctrl+F binding for bash?", true)? {
-        bashrc::install_ctrl_f_binding()?;
-        if bash_was_configured {
-            ui.note("Bash binding was already configured; updated it in place.");
-        } else {
-            ui.success("Added Bash binding.");
-        }
-        true
+    let shell = Shell::detect();
+    let mut key_binding_lines = vec![
+        "Ctrl+F can open the tmuxxer picker from supported shell prompts in tmux.".to_string(),
+        "Inside tmux, tmux forwards Ctrl+F to the current pane for the shell binding.".to_string(),
+        "Existing tmuxxer blocks are updated in place.".to_string(),
+    ];
+    if let Some(shell) = shell {
+        key_binding_lines.push(format!("Detected shell: {}.", shell.label()));
     } else {
-        ui.note("Skipped Bash binding.");
+        key_binding_lines.push(format!(
+            "Supported shells: {}.",
+            shell_config::supported_shell_names()
+        ));
+    }
+    ui.section("Key bindings", &key_binding_lines);
+
+    let mut added_shell = None;
+    let shell_available = if let Some(shell) = shell {
+        let shell_was_configured = shell_config::has_ctrl_f_binding(shell)?;
+        let prompt = format!("Add Ctrl+F binding for {}?", shell.name());
+        let shell_added = if prompt_yes_no(ui, &prompt, true)? {
+            shell_config::install_ctrl_f_binding(shell)?;
+            if shell_was_configured {
+                ui.note(&format!(
+                    "{} binding was already configured; updated it in place.",
+                    shell.label()
+                ));
+            } else {
+                ui.success(&format!("Added {} binding.", shell.label()));
+            }
+            added_shell = Some(shell);
+            true
+        } else {
+            ui.note(&format!("Skipped {} binding.", shell.label()));
+            false
+        };
+        shell_added || shell_was_configured
+    } else {
+        ui.warn("Could not detect a supported shell for Ctrl+F binding.");
+        ui.note(&format!(
+            "Supported shells: {}.",
+            shell_config::supported_shell_names()
+        ));
         false
     };
-    let bash_available = bash_added || bash_was_configured;
 
-    let tmux_conf = if bash_available {
+    let tmux_conf = if shell_available {
         if prompt_yes_no(ui, "Add Ctrl+F tmux passthrough?", true)? {
             let already_configured = tmux_conf::has_ctrl_f_binding()?;
             let conf = tmux_conf::install_ctrl_f_binding()?;
@@ -325,7 +347,7 @@ fn run_user_config_setup_with_ui(ui: &TerminalUi, include_docker_config: bool) -
             None
         }
     } else {
-        ui.note("Skipped tmux binding because it only forwards Ctrl+F to a shell binding.");
+        ui.note("Skipped tmux binding because it forwards Ctrl+F to a shell binding.");
         None
     };
 
@@ -349,12 +371,16 @@ fn run_user_config_setup_with_ui(ui: &TerminalUi, include_docker_config: bool) -
         }
     }
 
-    if bash_added {
+    if let Some(shell) = added_shell {
+        let reload_hint = shell.reload_hint()?;
         ui.section(
             "Shell note",
             &[
-                "Bash Ctrl+F is active in new interactive shells.",
-                "For this shell, run: source ~/.bashrc",
+                format!(
+                    "{} Ctrl+F is active in new interactive shells.",
+                    shell.label()
+                ),
+                format!("For this shell, run: {reload_hint} or restart your terminal."),
             ],
         );
     }

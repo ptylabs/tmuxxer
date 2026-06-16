@@ -1,92 +1,70 @@
-# tmuxxer
+# ⚡ tmuxxer
 
-Tmux power tools. `tmuxxer` is a sessionizer that combines configured project folders, live tmux sessions, and running Docker containers in one `fzf` picker.
+**Sessionize everything. Ctrl+f into your folders, dockers, sessions...**
 
-Inspired by [tmux-sessionizer](https://github.com/joshmedeski/tmux-sessionizer), with existing sessions and optional Docker containers listed alongside candidate directories.
+<p align="center">
+  <a href="https://crates.io/crates/tmuxxer">
+    <img src="https://img.shields.io/crates/v/tmuxxer?style=flat&logo=rust&color=0891b2" alt="Crates.io Version" />
+  </a>
+  <img src="https://img.shields.io/badge/Made%20with-Rust-black?style=flat&logo=rust" alt="Rust" />
+  <img src="https://img.shields.io/badge/Runs%20with-tmux-1BB91F?style=flat&logo=tmux&logoColor=white" alt="tmux" />
+  <img src="https://img.shields.io/badge/Powered%20by-fzf-ff0055?style=flat" alt="fzf" />
+  <img src="https://img.shields.io/badge/license-MIT-blue?style=flat" alt="License" />
+</p>
+
+<p align="center">
+  <sub>Made with ❤️ by <a href="https://github.com/ptylabs">ptylabs</a></sub>
+</p>
+
+`tmuxxer` is a sessionizer that combines configured project folders, live tmux sessions, and more in one `fzf` picker. The idea is to give the binding `Ctrl+f` the power to jump into every project you need within milliseconds.
+
+Inspired by [tmux-sessionizer](https://github.com/theprimeagen/tmux-sessionizer) and intended to give it batteries.
 
 ## Requirements
 
-- [tmux](https://github.com/tmux/tmux) on `PATH`
-- [fzf](https://github.com/junegunn/fzf) on `PATH`
+- [tmux](https://github.com/tmux/tmux) installed
+- [fzf](https://github.com/junegunn/fzf) installed
 
-Docker is optional. When Docker is available and enabled in config, running containers can appear in the picker.
-Rust is only required when building from source.
+Those are usually installed by default.
 
-## Install
+> **Note:** Docker is optional. When Docker is available and enabled in config, running containers can appear in the picker. Rust is only required when building from source.
 
-Recommended install:
+## 📦 Install
 
-```bash
-curl -fsSL https://ptylabs.github.io/tmuxxer/install.sh | sh
-```
-
-The installer downloads the latest stable GitHub Release for your Linux architecture,
-verifies its SHA256 checksum, and installs a durable binary to
-`~/.local/bin/tmuxxer`. If that directory is not on `PATH`, it prints the exact
-shell command to add it.
-
-Fallback URL if GitHub Pages is not enabled yet:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/ptylabs/tmuxxer/main/docs/install.sh | sh
-```
-
-Installer environment overrides:
-
-```bash
-TMUXXER_INSTALL_DIR=/usr/local/bin sh docs/install.sh
-TMUXXER_VERSION=1.0.0 sh docs/install.sh
-TMUXXER_DEBUG=1 sh docs/install.sh
-```
-
-Alternative source install from crates.io, when published:
+Install and compile from crates.io:
 
 ```bash
 cargo install tmuxxer
 ```
 
-Development install from a local checkout:
+Binary install: 
 
 ```bash
-cargo install --path .
+curl -fsSL [https://ptylabs.github.io/tmuxxer/install.sh](https://ptylabs.github.io/tmuxxer/install.sh) | sh
 ```
 
-For development or a quick trial, run commands through Cargo without installing:
+[View installation script here](https://raw.githubusercontent.com/ptylabs/tmuxxer/main/docs/install.sh)
 
-```bash
-cargo run -- sessionize
-```
+Permanent key binding setup through `tmuxxer init` or `tmuxxer user-config` requires an installed executable on `PATH`; Cargo build artifacts such as `target/debug/tmuxxer` are intentionally not written into dotfiles.
 
-Permanent key binding setup through `tmuxxer init` or `tmuxxer user-config`
-requires an installed executable on `PATH`; Cargo build artifacts such as
-`target/debug/tmuxxer` are intentionally not written into dotfiles.
+## 🚀 Usage
 
-## Usage
+The proposed way to use is to run `tmuxxer init` and setup bindings for your shell and tmux. After sourcing your shell config or restarting your terminal, you should be able to just press `Ctrl+f` and look for your project.
+
+Basic usage commands:
 
 ```bash
 tmuxxer              # setup on first run, then open the picker
 tmuxxer sessionize   # same as default
-tmuxxer s            # short alias for sessionize
 tmuxxer init         # re-run setup and rewrite project roots
 tmuxxer user-config  # configure Ctrl+F bindings and Docker behavior
-
-tmuxxer config path
-tmuxxer config list
-tmuxxer config get sources.docker
-tmuxxer config set sources.docker false
-tmuxxer config toggle sources.docker
-tmuxxer config validate
-tmuxxer config migrate
-
-tmuxxer --add ~/code        # toggle a search root
-tmuxxer --ignore target     # toggle an ignore pattern
-tmuxxer update                # update a script or Cargo install
-tmuxxer update --disable-auto # disable automatic update checks
-tmuxxer --version
-tmuxxer --help
+tmuxxer --add        # Add a project to the fuzzy finder
+tmuxxer --ignore     # Ignore a project from the fuzzy finder
 ```
 
-## Picker Entries
+Please refer to the documentation for additional usage.
+
+## 👀 What you'll see when fuzzy finding
 
 - `[session] name` attaches or switches to an existing tmux session.
 - `[docker] name - image (id)` opens a shell inside a running container when Docker entries are enabled.
@@ -94,13 +72,13 @@ tmuxxer --help
 
 Inside tmux, selected directory sessions use `tmux switch-client`. Outside tmux, tmuxxer creates or attaches to the target session.
 
-## Configuration
+## ⚙️ Configuration
 
 Config lives at `$XDG_CONFIG_HOME/tmuxxer/config`, or `~/.config/tmuxxer/config` when `XDG_CONFIG_HOME` is not set.
 
 See [docs/config.md](docs/config.md) for every supported config flag, valid values, defaults, and migration notes.
 
-## Release assets
+## 🏷️ Release Assets
 
 The install script and `tmuxxer update` both consume GitHub Release assets named:
 
@@ -109,26 +87,7 @@ tmuxxer-{version}-{target}.tar.gz
 tmuxxer-{version}-sha256sums.txt
 ```
 
-`{version}` is the Cargo version without a leading `v`; the Git tag keeps the
-leading `v` (`v1.0.0` tag, `tmuxxer-1.0.0-x86_64-unknown-linux-gnu.tar.gz`
-asset). The release workflow currently builds:
+`{version}` is the Cargo version without a leading `v`; the Git tag keeps the leading `v` (`v1.0.0` tag, `tmuxxer-1.0.0-x86_64-unknown-linux-gnu.tar.gz` asset). The release workflow currently builds:
 
 - `x86_64-unknown-linux-gnu`
 - `aarch64-unknown-linux-gnu`
-
-To publish the installer URL, enable GitHub Pages from repository
-Settings → Pages → Deploy from a branch → `main` / `docs`. First release:
-
-```bash
-cargo test --locked
-git tag v1.0.0
-git push origin v1.0.0
-```
-
-After the workflow finishes, verify the release contains both tarballs and
-`tmuxxer-1.0.0-sha256sums.txt`, then verify:
-
-```bash
-curl -fsSL https://ptylabs.github.io/tmuxxer/install.sh | sh
-tmuxxer --version
-```

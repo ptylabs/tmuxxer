@@ -196,11 +196,15 @@ print_path_help() {
 
     printf '\n%s is not on PATH yet. Add it, then restart your shell.\n' "$dir"
     case "$shell_name" in
-        fish)
+        fish | fsh)
             printf '  fish_add_path "%s"\n' "$dir"
             ;;
         zsh)
             printf '  printf '\''%%s\\n'\'' '\''export PATH="%s:$PATH"'\'' >> ~/.zshrc\n' "$dir"
+            ;;
+        nu | nushell)
+            printf '  mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/nushell"\n'
+            printf '  printf '\''%%s\\n'\'' '\''$env.PATH = ($env.PATH | prepend "%s")'\'' >> "${XDG_CONFIG_HOME:-$HOME/.config}/nushell/config.nu"\n' "$dir"
             ;;
         *)
             printf '  printf '\''%%s\\n'\'' '\''export PATH="%s:$PATH"'\'' >> ~/.bashrc\n' "$dir"

@@ -1,4 +1,3 @@
-pub mod bashrc;
 pub mod config;
 pub mod config_cmd;
 pub mod deps;
@@ -7,6 +6,7 @@ pub mod fzf;
 pub mod install;
 pub mod sessionizer;
 pub mod setup;
+pub mod shell_config;
 pub mod terminal_ui;
 pub mod tmux;
 pub mod tmux_conf;
@@ -111,7 +111,7 @@ fn help_text() -> &'static str {
         "  tmuxxer              Pick a folder, tmux session, or Docker container (fzf)\n",
         "  tmuxxer sessionize   Same as default\n",
         "  tmuxxer init         Re-run setup and rewrite config\n",
-        "  tmuxxer user-config  Reconfigure tmux/bash user bindings\n",
+        "  tmuxxer user-config  Reconfigure tmux/shell user bindings\n",
         "  tmuxxer config path  Print config file path\n",
         "  tmuxxer config list  Print current config values\n",
         "  tmuxxer config get KEY\n",
