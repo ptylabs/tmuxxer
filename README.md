@@ -8,7 +8,6 @@
   </a>
   <img src="https://img.shields.io/badge/Made%20with-Rust-black?style=flat&logo=rust" alt="Rust" />
   <img src="https://img.shields.io/badge/Runs%20with-tmux-1BB91F?style=flat&logo=tmux&logoColor=white" alt="tmux" />
-  <img src="https://img.shields.io/badge/Powered%20by-fzf-ff0055?style=flat" alt="fzf" />
   <img src="https://img.shields.io/badge/license-MIT-blue?style=flat" alt="License" />
 </p>
 
@@ -47,7 +46,7 @@ curl -fsSL [https://ptylabs.github.io/tmuxxer/install.sh](https://ptylabs.github
 
 Permanent key binding setup through `tmuxxer init` or `tmuxxer user-config` requires an installed executable on `PATH`; Cargo build artifacts such as `target/debug/tmuxxer` are intentionally not written into dotfiles.
 
-## 🚀 Usage
+## Usage
 
 The proposed way to use is to run `tmuxxer init` and setup bindings for your shell and tmux. After sourcing your shell config or restarting your terminal, you should be able to just press `Ctrl+f` and look for your project.
 
@@ -87,7 +86,7 @@ tmuxxer-{version}-{target}.tar.gz
 tmuxxer-{version}-sha256sums.txt
 ```
 
-`{version}` is the Cargo version without a leading `v`; the Git tag keeps the leading `v` (`v1.0.0` tag, `tmuxxer-1.0.0-x86_64-unknown-linux-gnu.tar.gz` asset). The release workflow currently builds:
+`{version}` is the Cargo version without a leading `v`; the Git tag keeps the leading `v` (`v1.0.1` tag, `tmuxxer-1.0.1-x86_64-unknown-linux-gnu.tar.gz` asset). The release workflow currently builds:
 
 - `x86_64-unknown-linux-gnu`
 - `aarch64-unknown-linux-gnu`
