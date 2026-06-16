@@ -23,7 +23,7 @@ jobs:
             linker_env: CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER
             linker: aarch64-linux-gnu-gcc
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -67,7 +67,7 @@ jobs:
           cp LICENSE README.md "dist/$asset/"
           tar -C "dist/$asset" -czf "dist/$asset.tar.gz" tmuxxer LICENSE README.md
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: tmuxxer-${{ matrix.target }}
           path: dist/*.tar.gz
@@ -78,7 +78,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: build
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           pattern: tmuxxer-*
@@ -90,7 +90,7 @@ jobs:
           cd dist
           sha256sum tmuxxer-"$version"-*.tar.gz > "tmuxxer-$version-sha256sums.txt"
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           name: tmuxxer ${{ github.ref_name }}
           tag_name: ${{ github.ref_name }}
