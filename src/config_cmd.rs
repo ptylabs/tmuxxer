@@ -1,6 +1,6 @@
 use std::io;
 
-use crate::config::{self, Config, BOOL_SETTING_KEYS, STRING_SETTING_KEYS};
+use crate::config::{self, BOOL_SETTING_KEYS, Config, STRING_SETTING_KEYS};
 
 pub fn run(args: &[String]) -> io::Result<()> {
     match args {

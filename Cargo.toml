@@ -1,7 +1,8 @@
 [package]
 name = "tmuxxer"
 version = "1.0.1"
-edition = "2021"
+edition = "2024"
+rust-version = "1.85"
 description = "⚡Tmux power tools — sessionizer & fzf. Ctrl+f Into everything!"
 license = "MIT"
 readme = "README.md"
@@ -10,12 +11,12 @@ exclude = ["AGENTS.md"]
 
 [dependencies]
 serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.145"
-thiserror = "2.0.17"
-toml = "0.8.23"
+serde_json = "1.0.150"
+thiserror = "2.0.18"
+toml = "1.1.2"
 
 [dev-dependencies]
-proptest = "1.9.0"
+proptest = "1.11.0"
 
 [[bin]]
 name = "tmuxxer"
