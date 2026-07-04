@@ -5,9 +5,7 @@ use std::path::{Path, PathBuf};
 
 use crate::config;
 use crate::install;
-
-const MARKER_START: &str = "# >>> tmuxxer >>>";
-const MARKER_END: &str = "# <<< tmuxxer <<<";
+use crate::markers::{MARKER_END, MARKER_START, find_block_span, upsert_block};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Shell {
@@ -101,15 +99,7 @@ pub fn install_ctrl_f_binding(shell: Shell) -> io::Result<PathBuf> {
         String::from("# tmuxxer\n")
     };
 
-    if let Some((start, end)) = find_block_span(&content) {
-        content.replace_range(start..end, &block);
-    } else if !content.ends_with('\n') {
-        content.push('\n');
-        content.push_str(&block);
-    } else {
-        content.push_str(&block);
-    }
-
+    upsert_block(&mut content, &block);
     fs::write(&path, content)?;
     Ok(path)
 }
@@ -246,19 +236,6 @@ fn detect_parent_shell() -> Option<Shell> {
     })?;
     let command = fs::read_to_string(format!("/proc/{ppid}/comm")).ok()?;
     Shell::from_path(command.trim())
-}
-
-fn find_block_span(content: &str) -> Option<(usize, usize)> {
-    let start = content.find(MARKER_START)?;
-    let rest = &content[start..];
-    let end_rel = rest.find(MARKER_END)? + MARKER_END.len();
-    let end = start + end_rel;
-    let end = if content[end..].starts_with('\n') {
-        end + 1
-    } else {
-        end
-    };
-    Some((start, end))
 }
 
 #[cfg(test)]

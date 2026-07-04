@@ -5,9 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::config;
-
-const MARKER_START: &str = "# >>> tmuxxer >>>";
-const MARKER_END: &str = "# <<< tmuxxer <<<";
+use crate::markers::{MARKER_END, MARKER_START, find_block_span, upsert_block};
 
 /// User config file tmux is loading, or a conservative default for new installs.
 pub fn active_config_path() -> PathBuf {
@@ -55,15 +53,7 @@ pub fn install_ctrl_f_binding() -> io::Result<PathBuf> {
     let bind_line = forward_ctrl_f_bind_line();
     let block = format!("{MARKER_START}\n{bind_line}\n{MARKER_END}\n");
 
-    if let Some((start, end)) = find_block_span(&content) {
-        content.replace_range(start..end, &block);
-    } else if !content.is_empty() && !content.ends_with('\n') {
-        content.push('\n');
-        content.push_str(&block);
-    } else {
-        content.push_str(&block);
-    }
-
+    upsert_block(&mut content, &block);
     fs::write(&path, content)?;
     Ok(path)
 }
@@ -189,19 +179,6 @@ pub fn has_ctrl_f_binding() -> io::Result<bool> {
         return Ok(false);
     }
     Ok(find_block_span(&fs::read_to_string(path)?).is_some())
-}
-
-fn find_block_span(content: &str) -> Option<(usize, usize)> {
-    let start = content.find(MARKER_START)?;
-    let rest = &content[start..];
-    let end_rel = rest.find(MARKER_END)? + MARKER_END.len();
-    let end = start + end_rel;
-    let end = if content[end..].starts_with('\n') {
-        end + 1
-    } else {
-        end
-    };
-    Some((start, end))
 }
 
 #[cfg(test)]

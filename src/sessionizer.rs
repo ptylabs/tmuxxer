@@ -144,8 +144,14 @@ fn collect_dirs(
         Err(_) => return,
     };
     for entry in entries.flatten() {
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
         let path = entry.path();
-        if path.is_dir() && !is_ignored(search_root, &path, ignore_rules) {
+        // file_type() avoids a stat per entry; symlinks still need one to
+        // keep following symlinked directories.
+        let is_dir = file_type.is_dir() || (file_type.is_symlink() && path.is_dir());
+        if is_dir && !is_ignored(search_root, &path, ignore_rules) {
             out.push(path.clone());
             collect_dirs(
                 search_root,
@@ -366,12 +372,7 @@ fn sessionize_dir<T: tmux::TmuxCommand>(
         tmux_client.new_session(&name, dir, true)?;
     }
 
-    if tmux_client.inside_tmux() {
-        tmux_client.switch_client(&name)?;
-    } else {
-        tmux_client.attach(&name)?;
-    }
-    Ok(())
+    attach_session(tmux_client, &name)
 }
 
 fn open_docker<T, D>(
@@ -413,12 +414,7 @@ where
         tmux_client.new_session_with_command(&name, &command, true)?;
     }
 
-    if tmux_client.inside_tmux() {
-        tmux_client.switch_client(&name)?;
-    } else {
-        tmux_client.attach(&name)?;
-    }
-    Ok(())
+    attach_session(tmux_client, &name)
 }
 
 fn session_name_from_dir(dir: &Path, name_strategy: SessionNameStrategy) -> String {
@@ -432,19 +428,7 @@ fn session_name_from_dir(dir: &Path, name_strategy: SessionNameStrategy) -> Stri
 }
 
 fn session_name_from_docker(container: &docker::Container) -> String {
-    let name = container
-        .name
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {
-                ch
-            } else {
-                '_'
-            }
-        })
-        .collect::<String>();
-
-    format!("docker_{name}")
+    format!("docker_{}", sanitize_session_chars(&container.name))
 }
 
 fn available_session_name(base: &str, existing: &[String]) -> String {
@@ -462,8 +446,8 @@ fn available_session_name(base: &str, existing: &[String]) -> String {
     }
 }
 
-fn sanitize_session_name_part(value: &str) -> String {
-    let sanitized = value
+fn sanitize_session_chars(value: &str) -> String {
+    value
         .chars()
         .map(|ch| {
             if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {
@@ -472,8 +456,11 @@ fn sanitize_session_name_part(value: &str) -> String {
                 '_'
             }
         })
-        .collect::<String>();
+        .collect()
+}
 
+fn sanitize_session_name_part(value: &str) -> String {
+    let sanitized = sanitize_session_chars(value);
     if sanitized.chars().any(|ch| ch != '_') {
         sanitized
     } else {

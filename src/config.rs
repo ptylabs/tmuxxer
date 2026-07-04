@@ -370,6 +370,23 @@ pub fn exists() -> bool {
     config_path().is_file()
 }
 
+/// Load the config for a CLI command, pointing the user at `tmuxxer init`
+/// when no config exists yet.
+pub fn load_or_suggest_init() -> io::Result<Config> {
+    Config::load()
+        .map(ValidatedConfig::into_inner)
+        .map_err(|e| {
+            if e.kind() == io::ErrorKind::NotFound {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "config not found; run tmuxxer init first",
+                )
+            } else {
+                e.into()
+            }
+        })
+}
+
 pub fn home_dir() -> Option<PathBuf> {
     env::var_os("HOME").map(PathBuf::from)
 }

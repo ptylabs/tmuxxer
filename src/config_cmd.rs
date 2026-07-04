@@ -1,3 +1,4 @@
+use std::fmt::Write as _;
 use std::io;
 
 use crate::config::{self, BOOL_SETTING_KEYS, Config, STRING_SETTING_KEYS};
@@ -88,18 +89,7 @@ pub fn run(args: &[String]) -> io::Result<()> {
 }
 
 fn load_config() -> io::Result<Config> {
-    Config::load()
-        .map(|config| config.into_inner())
-        .map_err(|e| {
-            if e.kind() == io::ErrorKind::NotFound {
-                io::Error::new(
-                    io::ErrorKind::NotFound,
-                    "config not found; run tmuxxer init first",
-                )
-            } else {
-                e.into()
-            }
-        })
+    config::load_or_suggest_init()
 }
 
 fn format_list(config: &Config) -> String {
@@ -107,28 +97,31 @@ fn format_list(config: &Config) -> String {
 
     for key in BOOL_SETTING_KEYS {
         let value = config.bool_setting(key).unwrap_or(false);
-        output.push_str(&format!("{key} = {value}\n"));
+        let _ = writeln!(output, "{key} = {value}");
     }
 
     for key in STRING_SETTING_KEYS {
         let value = config.string_setting(key).unwrap_or("");
-        output.push_str(&format!("{key} = {}\n", toml_string(value)));
+        let _ = writeln!(output, "{key} = {}", toml_string(value));
     }
 
-    output.push_str(&format!(
-        "search.ignore = {}\n",
+    let _ = writeln!(
+        output,
+        "search.ignore = {}",
         toml_string_array(&config.search.ignores)
-    ));
+    );
 
     for (index, root) in config.search.roots.iter().enumerate() {
-        output.push_str(&format!(
-            "search.roots[{index}].path = {}\n",
+        let _ = writeln!(
+            output,
+            "search.roots[{index}].path = {}",
             toml_string(&config::stored_path(&root.path))
-        ));
-        output.push_str(&format!(
-            "search.roots[{index}].depth = {}\n",
+        );
+        let _ = writeln!(
+            output,
+            "search.roots[{index}].depth = {}",
             root.depth.max(1)
-        ));
+        );
     }
 
     output

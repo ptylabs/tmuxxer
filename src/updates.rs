@@ -76,53 +76,68 @@ pub struct CommandReleaseFetcher;
 
 impl ReleaseFetcher for CommandReleaseFetcher {
     fn fetch(&self, url: &str) -> Result<String, UpdateError> {
-        let mut attempted = false;
+        let commands = http_get_commands(url, 5, "tmuxxer-update-check", None);
+        if commands.is_empty() {
+            return Err(UpdateError::FetchUnavailable);
+        }
 
-        if command_exists("curl") {
-            attempted = true;
-            let output = Command::new("curl")
-                .args([
-                    "--fail",
-                    "--silent",
-                    "--show-error",
-                    "--location",
-                    "--max-time",
-                    "5",
-                    "-H",
-                    "User-Agent: tmuxxer-update-check",
-                    url,
-                ])
-                .output()?;
+        for mut command in commands {
+            let output = command.output()?;
             if output.status.success() {
                 return Ok(String::from_utf8_lossy(&output.stdout).to_string());
             }
         }
 
-        if command_exists("wget") {
-            attempted = true;
-            let output = Command::new("wget")
-                .args([
-                    "--quiet",
-                    "--timeout=5",
-                    "--user-agent=tmuxxer-update-check",
-                    "-O",
-                    "-",
-                    url,
-                ])
-                .output()?;
-            if output.status.success() {
-                return Ok(String::from_utf8_lossy(&output.stdout).to_string());
-            }
-        }
-
-        if attempted {
-            Err(UpdateError::FetchCommandFailed {
-                command: "curl/wget",
-            })
-        } else {
-            Err(UpdateError::FetchUnavailable)
-        }
+        Err(UpdateError::FetchCommandFailed {
+            command: "curl/wget",
+        })
     }
+}
+
+/// Commands that fetch `url` with each available downloader (curl, then
+/// wget), writing to `output` or stdout when `output` is None.
+fn http_get_commands(
+    url: &str,
+    timeout_secs: u32,
+    user_agent: &str,
+    output: Option<&Path>,
+) -> Vec<Command> {
+    let mut commands = Vec::new();
+
+    if command_exists("curl") {
+        let mut cmd = Command::new("curl");
+        cmd.args([
+            "--fail",
+            "--silent",
+            "--show-error",
+            "--location",
+            "--max-time",
+        ])
+        .arg(timeout_secs.to_string())
+        .arg("-H")
+        .arg(format!("User-Agent: {user_agent}"));
+        if let Some(path) = output {
+            cmd.arg("-o").arg(path);
+        }
+        cmd.arg(url);
+        commands.push(cmd);
+    }
+
+    if command_exists("wget") {
+        let mut cmd = Command::new("wget");
+        cmd.arg("--quiet")
+            .arg(format!("--timeout={timeout_secs}"))
+            .arg(format!("--user-agent={user_agent}"))
+            .arg("-O");
+        match output {
+            Some(path) => cmd.arg(path),
+            None => cmd.arg("-"),
+        };
+        cmd.arg(url);
+        commands.push(cmd);
+    }
+
+    commands
 }
 
 #[derive(Debug, Deserialize)]
@@ -436,47 +451,21 @@ fn release_target() -> Option<&'static str> {
 }
 
 fn download_to_file(url: &str, path: &Path) -> io::Result<()> {
-    if command_exists("curl") {
-        let status = Command::new("curl")
-            .args([
-                "--fail",
-                "--silent",
-                "--show-error",
-                "--location",
-                "--max-time",
-                "60",
-                "-H",
-                "User-Agent: tmuxxer-update",
-                "-o",
-                &path.display().to_string(),
-                url,
-            ])
-            .status()?;
-        if status.success() {
+    let commands = http_get_commands(url, 60, "tmuxxer-update", Some(path));
+    if commands.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "tmuxxer update needs curl or wget on PATH",
+        ));
+    }
+
+    for mut command in commands {
+        if command.status()?.success() {
             return Ok(());
         }
     }
 
-    if command_exists("wget") {
-        let status = Command::new("wget")
-            .args([
-                "--quiet",
-                "--timeout=60",
-                "--user-agent=tmuxxer-update",
-                "-O",
-                &path.display().to_string(),
-                url,
-            ])
-            .status()?;
-        if status.success() {
-            return Ok(());
-        }
-    }
-
-    Err(io::Error::new(
-        io::ErrorKind::NotFound,
-        "tmuxxer update needs curl or wget on PATH",
-    ))
+    Err(io::Error::other(format!("failed to download {url}")))
 }
 
 fn verify_archive_checksum(checksums: &Path, asset_name: &str, archive: &Path) -> io::Result<()> {
@@ -755,12 +744,24 @@ fn parse_release_details(body: &str) -> Result<LatestRelease, UpdateError> {
 }
 
 fn command_exists(command: &str) -> bool {
-    Command::new("sh")
-        .arg("-c")
-        .arg(format!("command -v {command} >/dev/null 2>&1"))
-        .status()
-        .map(|status| status.success())
+    let Some(paths) = env::var_os("PATH") else {
+        return false;
+    };
+    env::split_paths(&paths).any(|dir| is_executable(&dir.join(command)))
+}
+
+#[cfg(unix)]
+fn is_executable(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    fs::metadata(path)
+        .map(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
         .unwrap_or(false)
+}
+
+#[cfg(not(unix))]
+fn is_executable(path: &Path) -> bool {
+    path.is_file()
 }
 
 fn check_is_due() -> bool {
@@ -774,25 +775,29 @@ fn acquire_lock() -> io::Result<bool> {
         fs::create_dir_all(parent)?;
     }
 
-    match OpenOptions::new().write(true).create_new(true).open(&path) {
-        Ok(mut file) => {
-            let _ = writeln!(file, "{}", now_secs());
-            Ok(true)
-        }
-        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
-            let stale = fs::metadata(&path)
-                .and_then(|metadata| metadata.modified())
-                .ok()
-                .and_then(|modified| modified.elapsed().ok())
-                .is_some_and(|elapsed| elapsed.as_secs() > 10 * 60);
-            if stale {
-                let _ = fs::remove_file(&path);
-                return acquire_lock();
+    // Second attempt only runs after removing a stale lock.
+    for _ in 0..2 {
+        match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(mut file) => {
+                let _ = writeln!(file, "{}", now_secs());
+                return Ok(true);
             }
-            Ok(false)
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+                let stale = fs::metadata(&path)
+                    .and_then(|metadata| metadata.modified())
+                    .ok()
+                    .and_then(|modified| modified.elapsed().ok())
+                    .is_some_and(|elapsed| elapsed.as_secs() > 10 * 60);
+                if !stale {
+                    return Ok(false);
+                }
+                let _ = fs::remove_file(&path);
+            }
+            Err(e) => return Err(e),
         }
-        Err(e) => Err(e),
     }
+
+    Ok(false)
 }
 
 fn read_state() -> io::Result<UpdateState> {

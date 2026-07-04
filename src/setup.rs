@@ -516,18 +516,7 @@ fn ignore_entries_match(home: &Path, left: &str, right: &str) -> bool {
 }
 
 fn load_config() -> io::Result<config::Config> {
-    config::Config::load()
-        .map(|config| config.into_inner())
-        .map_err(|e| {
-            if e.kind() == io::ErrorKind::NotFound {
-                io::Error::new(
-                    io::ErrorKind::NotFound,
-                    "config not found; run tmuxxer init first",
-                )
-            } else {
-                e.into()
-            }
-        })
+    config::load_or_suggest_init()
 }
 
 fn append_ignore(config: &mut config::Config, line: &str) -> AppendResult {

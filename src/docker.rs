@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::io;
 use std::process::{Command, Stdio};
 use thiserror::Error;
@@ -128,18 +127,6 @@ impl SystemDocker {
     }
 }
 
-pub fn containers() -> Vec<Container> {
-    SystemDocker.containers()
-}
-
-pub fn shell_command(container: &Container) -> String {
-    SystemDocker.shell_command(container)
-}
-
-pub fn exec_shell(container: &Container) -> io::Result<()> {
-    SystemDocker.exec_shell(container).map_err(Into::into)
-}
-
 fn shell_command_with_shell(container: &Container, shell: &str) -> String {
     format!(
         "docker exec -it {} {}",
@@ -184,47 +171,46 @@ fn parse_shell_env(env_lines: &str) -> Option<String> {
     })
 }
 
+const FALLBACK_SHELLS: &[&str] = &[
+    "bash",
+    "/bin/bash",
+    "/usr/bin/bash",
+    "zsh",
+    "/bin/zsh",
+    "/usr/bin/zsh",
+    "fish",
+    "/bin/fish",
+    "/usr/bin/fish",
+    "sh",
+    "/bin/sh",
+    "/usr/bin/sh",
+    "ash",
+    "/bin/ash",
+    "/usr/bin/ash",
+    "dash",
+    "/bin/dash",
+    "/usr/bin/dash",
+    "ksh",
+    "/bin/ksh",
+    "/usr/bin/ksh",
+];
+
 fn shell_candidates(configured_shell: Option<&str>) -> Vec<String> {
-    let mut candidates = Vec::new();
-    let mut seen = HashSet::new();
+    let mut candidates: Vec<String> = Vec::with_capacity(FALLBACK_SHELLS.len() + 1);
 
     if let Some(shell) = configured_shell {
-        push_unique_shell(shell, &mut candidates, &mut seen);
+        if is_supported_shell(shell) {
+            candidates.push(shell.to_string());
+        }
     }
 
-    for shell in [
-        "bash",
-        "/bin/bash",
-        "/usr/bin/bash",
-        "zsh",
-        "/bin/zsh",
-        "/usr/bin/zsh",
-        "fish",
-        "/bin/fish",
-        "/usr/bin/fish",
-        "sh",
-        "/bin/sh",
-        "/usr/bin/sh",
-        "ash",
-        "/bin/ash",
-        "/usr/bin/ash",
-        "dash",
-        "/bin/dash",
-        "/usr/bin/dash",
-        "ksh",
-        "/bin/ksh",
-        "/usr/bin/ksh",
-    ] {
-        push_unique_shell(shell, &mut candidates, &mut seen);
+    for shell in FALLBACK_SHELLS {
+        if candidates.first().map(String::as_str) != Some(*shell) {
+            candidates.push((*shell).to_string());
+        }
     }
 
     candidates
-}
-
-fn push_unique_shell(shell: &str, candidates: &mut Vec<String>, seen: &mut HashSet<String>) {
-    if is_supported_shell(shell) && seen.insert(shell.to_string()) {
-        candidates.push(shell.to_string());
-    }
 }
 
 fn is_supported_shell(shell: &str) -> bool {

@@ -153,39 +153,3 @@ impl TmuxCommand for SystemTmux {
         }
     }
 }
-
-pub fn inside_tmux() -> bool {
-    SystemTmux.inside_tmux()
-}
-
-pub fn server_running() -> bool {
-    SystemTmux.server_running()
-}
-
-pub fn sessions() -> Vec<String> {
-    SystemTmux.sessions()
-}
-
-pub fn has_session(name: &str) -> bool {
-    SystemTmux.has_session(name)
-}
-
-pub fn new_session(name: &str, dir: &Path, detached: bool) -> io::Result<()> {
-    SystemTmux
-        .new_session(name, dir, detached)
-        .map_err(Into::into)
-}
-
-pub fn new_session_with_command(name: &str, command: &str, detached: bool) -> io::Result<()> {
-    SystemTmux
-        .new_session_with_command(name, command, detached)
-        .map_err(Into::into)
-}
-
-pub fn switch_client(name: &str) -> io::Result<()> {
-    SystemTmux.switch_client(name).map_err(Into::into)
-}
-
-pub fn attach(name: &str) -> io::Result<()> {
-    SystemTmux.attach(name).map_err(Into::into)
-}
