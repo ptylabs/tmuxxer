@@ -1,6 +1,6 @@
 [package]
 name = "tmuxxer"
-version = "1.0.1"
+version = "1.0.2"
 edition = "2024"
 rust-version = "1.85"
 description = "⚡Tmux power tools — sessionizer & fzf. Ctrl+f Into everything!"
@@ -21,3 +21,8 @@ proptest = "1.11.0"
 [[bin]]
 name = "tmuxxer"
 path = "src/main.rs"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = "symbols"

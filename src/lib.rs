@@ -4,6 +4,7 @@ pub mod deps;
 pub mod docker;
 pub mod fzf;
 pub mod install;
+pub mod markers;
 pub mod sessionizer;
 pub mod setup;
 pub mod shell_config;

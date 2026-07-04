@@ -424,7 +424,7 @@ struct TestPicker {
 }
 
 impl fzf::Picker for TestPicker {
-    fn pick(&self, _items: &[String]) -> Result<Option<String>, fzf::PickerError> {
+    fn pick(&self, _items: &[String]) -> io::Result<Option<String>> {
         Ok(self.selection.clone())
     }
 }
