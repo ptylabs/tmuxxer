@@ -1,5 +1,5 @@
 use super::*;
-use std::cell::RefCell;
+use std::sync::Mutex;
 
 use proptest::prelude::*;
 
@@ -65,7 +65,10 @@ fn run_with_uses_picker_trait_selection() {
 
     run_with(&config, &tmux_client, &docker_client, &picker).unwrap();
 
-    assert_eq!(tmux_client.calls.borrow().as_slice(), ["attach:work"]);
+    assert_eq!(
+        tmux_client.calls.lock().unwrap().as_slice(),
+        ["attach:work"]
+    );
 }
 
 #[test]
@@ -87,7 +90,10 @@ fn run_with_can_exec_docker_through_trait() {
 
     run_with(&config, &tmux_client, &docker_client, &picker).unwrap();
 
-    assert_eq!(docker_client.calls.borrow().as_slice(), ["exec-shell:web"]);
+    assert_eq!(
+        docker_client.calls.lock().unwrap().as_slice(),
+        ["exec-shell:web"]
+    );
 }
 
 #[test]
@@ -249,7 +255,7 @@ fn sessionize_dir_uses_tmux_trait() {
     .unwrap();
 
     assert_eq!(
-        tmux_client.calls.borrow().as_slice(),
+        tmux_client.calls.lock().unwrap().as_slice(),
         ["new-session:api-2:true", "switch-client:api-2"]
     );
 }
@@ -320,7 +326,7 @@ struct TestTmux {
     sessions: Option<Vec<String>>,
     inside_tmux: bool,
     server_running: bool,
-    calls: RefCell<Vec<String>>,
+    calls: Mutex<Vec<String>>,
 }
 
 impl TestTmux {
@@ -355,7 +361,8 @@ impl tmux::TmuxCommand for TestTmux {
 
     fn new_session(&self, name: &str, _dir: &Path, detached: bool) -> Result<(), tmux::TmuxError> {
         self.calls
-            .borrow_mut()
+            .lock()
+            .unwrap()
             .push(format!("new-session:{name}:{detached}"));
         Ok(())
     }
@@ -367,20 +374,22 @@ impl tmux::TmuxCommand for TestTmux {
         detached: bool,
     ) -> Result<(), tmux::TmuxError> {
         self.calls
-            .borrow_mut()
+            .lock()
+            .unwrap()
             .push(format!("new-session-command:{name}:{detached}"));
         Ok(())
     }
 
     fn switch_client(&self, name: &str) -> Result<(), tmux::TmuxError> {
         self.calls
-            .borrow_mut()
+            .lock()
+            .unwrap()
             .push(format!("switch-client:{name}"));
         Ok(())
     }
 
     fn attach(&self, name: &str) -> Result<(), tmux::TmuxError> {
-        self.calls.borrow_mut().push(format!("attach:{name}"));
+        self.calls.lock().unwrap().push(format!("attach:{name}"));
         Ok(())
     }
 }
@@ -388,7 +397,7 @@ impl tmux::TmuxCommand for TestTmux {
 #[derive(Default)]
 struct TestDocker {
     containers: Option<Vec<docker::Container>>,
-    calls: RefCell<Vec<String>>,
+    calls: Mutex<Vec<String>>,
 }
 
 impl TestDocker {
@@ -413,7 +422,8 @@ impl docker::DockerCommand for TestDocker {
 
     fn exec_shell(&self, container: &docker::Container) -> Result<(), docker::DockerError> {
         self.calls
-            .borrow_mut()
+            .lock()
+            .unwrap()
             .push(format!("exec-shell:{}", container.name));
         Ok(())
     }
@@ -427,4 +437,46 @@ impl fzf::Picker for TestPicker {
     fn pick(&self, _items: &[String]) -> io::Result<Option<String>> {
         Ok(self.selection.clone())
     }
+}
+
+#[test]
+fn directory_scan_deduplicates_roots_and_respects_depth_and_ignores() {
+    let temp = crate::test_support::TempDir::new("tmuxxer-scan");
+    for path in ["app/src/deep", "target/cache", "other"] {
+        fs::create_dir_all(temp.join(path)).unwrap();
+    }
+    let root = crate::config::SearchRoot {
+        path: temp.path().to_path_buf(),
+        depth: 2,
+    };
+    let mut config = Config::with_roots(vec![root.clone(), root]);
+    config.search.ignores.push("target".into());
+    assert_eq!(
+        collect_directories(&config),
+        vec![temp.join("app"), temp.join("other"), temp.join("app/src")]
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn directory_scan_follows_links_but_stops_ancestor_cycles() {
+    use std::os::unix::fs::symlink;
+    let temp = crate::test_support::TempDir::new("tmuxxer-links");
+    fs::create_dir_all(temp.join("projects/app")).unwrap();
+    fs::create_dir_all(temp.join("external/src")).unwrap();
+    symlink(temp.join("projects"), temp.join("projects/app/back")).unwrap();
+    symlink(temp.join("external"), temp.join("projects/linked")).unwrap();
+    let config = Config::with_roots(vec![crate::config::SearchRoot {
+        path: temp.join("projects"),
+        depth: usize::MAX,
+    }]);
+    assert_eq!(
+        collect_directories(&config),
+        vec![
+            temp.join("projects/app"),
+            temp.join("projects/app/back"),
+            temp.join("projects/linked"),
+            temp.join("projects/linked/src")
+        ]
+    );
 }

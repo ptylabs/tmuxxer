@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::borrow::Cow;
 use std::ffi::OsStr;
 use std::fs;
 use std::io;
@@ -37,18 +37,20 @@ fn run_with<T, D, P>(
     picker: &P,
 ) -> io::Result<()>
 where
-    T: tmux::TmuxCommand,
-    D: docker::DockerCommand,
+    T: tmux::TmuxCommand + Sync,
+    D: docker::DockerCommand + Sync,
     P: fzf::Picker,
 {
-    let (lines, map) = collect_entries_with(config, tmux_client, docker_client)?;
+    let (lines, entries) = collect_entries_with(config, tmux_client, docker_client)?;
 
     let Some(selection) = picker.pick(&lines)? else {
         return Ok(());
     };
 
-    let entry = map
-        .get(&selection)
+    let entry = lines
+        .iter()
+        .position(|line| line == &selection)
+        .map(|index| &entries[index])
         .ok_or_else(|| io::Error::other("invalid selection"))?;
 
     match entry {
@@ -67,56 +69,54 @@ fn collect_entries_with<T, D>(
     config: &Config,
     tmux_client: &T,
     docker_client: &D,
-) -> io::Result<(Vec<String>, HashMap<String, Entry>)>
+) -> io::Result<(Vec<String>, Vec<Entry>)>
 where
-    T: tmux::TmuxCommand,
-    D: docker::DockerCommand,
+    T: tmux::TmuxCommand + Sync,
+    D: docker::DockerCommand + Sync,
 {
     config.validate()?;
 
-    let mut lines = Vec::new();
-    let mut map = HashMap::new();
-    let ignore_rules: Vec<IgnoreRule> = config
-        .search
-        .ignores
-        .iter()
-        .map(|ignore| IgnoreRule::new(ignore))
-        .collect();
+    let (sessions, containers, dirs) = std::thread::scope(|scope| {
+        let sessions = config
+            .sources
+            .sessions
+            .then(|| scope.spawn(|| tmux_client.sessions()));
+        let containers = config
+            .sources
+            .docker
+            .then(|| scope.spawn(|| docker_client.containers()));
+        let dirs = collect_directories(config);
+        let sessions = sessions
+            .map(|worker| worker.join())
+            .transpose()
+            .map_err(|_| io::Error::other("tmux listing worker failed"))?
+            .unwrap_or_default();
+        let containers = containers
+            .map(|worker| worker.join())
+            .transpose()
+            .map_err(|_| io::Error::other("Docker listing worker failed"))?
+            .unwrap_or_default();
+        Ok::<_, io::Error>((sessions, containers, dirs))
+    })?;
 
-    if config.sources.sessions {
-        for name in tmux_client.sessions() {
-            let display = format!("{SESSION_PREFIX}{name}");
-            map.insert(display.clone(), Entry::Session(name));
-            lines.push(display);
-        }
+    let capacity = sessions.len() + containers.len() + dirs.len();
+    let mut lines = Vec::with_capacity(capacity);
+    let mut entries = Vec::with_capacity(capacity);
+    for name in sessions {
+        lines.push(format!("{SESSION_PREFIX}{name}"));
+        entries.push(Entry::Session(name));
     }
-
-    if config.sources.docker {
-        for container in docker_client.containers() {
-            let display = format!(
-                "{DOCKER_PREFIX}{} — {} ({})",
-                container.name, container.image, container.id
-            );
-            map.insert(display.clone(), Entry::Docker(container));
-            lines.push(display);
-        }
+    for container in containers {
+        lines.push(format!(
+            "{DOCKER_PREFIX}{} — {} ({})",
+            container.name, container.image, container.id
+        ));
+        entries.push(Entry::Docker(container));
     }
-
-    if config.sources.directories {
-        let mut dirs = Vec::new();
-        for root in &config.search.roots {
-            if root.path.is_dir() && !is_ignored(&root.path, &root.path, &ignore_rules) {
-                collect_dirs(&root.path, &root.path, root.depth, &ignore_rules, &mut dirs);
-            }
-        }
-        dirs.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
-
-        for path in dirs {
-            let label = path.file_name().and_then(OsStr::to_str).unwrap_or("?");
-            let display = format!("{DIR_PREFIX}{label} — {}", path.display());
-            map.insert(display.clone(), Entry::Dir(path));
-            lines.push(display);
-        }
+    for path in dirs {
+        let label = path.file_name().and_then(OsStr::to_str).unwrap_or("?");
+        lines.push(format!("{DIR_PREFIX}{label} — {}", path.display()));
+        entries.push(Entry::Dir(path));
     }
 
     if lines.is_empty() {
@@ -126,42 +126,67 @@ where
         ));
     }
 
-    Ok((lines, map))
+    Ok((lines, entries))
 }
 
-fn collect_dirs(
-    search_root: &Path,
-    dir: &Path,
-    max_depth: usize,
-    ignore_rules: &[IgnoreRule],
-    out: &mut Vec<PathBuf>,
-) {
-    if max_depth == 0 {
-        return;
+fn collect_directories(config: &Config) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    if !config.sources.directories {
+        return dirs;
     }
-    let entries = match fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-    for entry in entries.flatten() {
-        let Ok(file_type) = entry.file_type() else {
-            continue;
-        };
-        let path = entry.path();
-        // file_type() avoids a stat per entry; symlinks still need one to
-        // keep following symlinked directories.
-        let is_dir = file_type.is_dir() || (file_type.is_symlink() && path.is_dir());
-        if is_dir && !is_ignored(search_root, &path, ignore_rules) {
-            out.push(path.clone());
-            collect_dirs(
-                search_root,
-                &path,
-                max_depth.saturating_sub(1),
-                ignore_rules,
-                out,
-            );
+    let rules: Vec<_> = config
+        .search
+        .ignores
+        .iter()
+        .map(|rule| IgnoreRule::new(rule))
+        .collect();
+    for root in &config.search.roots {
+        if root.path.is_dir() && !is_ignored(&root.path, &root.path, &rules) {
+            collect_dirs(&root.path, root.depth, &rules, &mut dirs);
         }
     }
+    dirs.sort_unstable_by(|a, b| a.file_name().cmp(&b.file_name()).then_with(|| a.cmp(b)));
+    dirs.dedup();
+    dirs
+}
+
+fn collect_dirs(root: &Path, max_depth: usize, rules: &[IgnoreRule], out: &mut Vec<PathBuf>) {
+    let mut pending = vec![(root.to_path_buf(), max_depth)];
+    while let Some((dir, depth)) = pending.pop() {
+        if depth == 0 {
+            continue;
+        }
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if !file_type.is_dir() && !file_type.is_symlink() {
+                continue;
+            }
+            let path = entry.path();
+            if is_ignored(root, &path, rules) || (file_type.is_symlink() && !path.is_dir()) {
+                continue;
+            }
+            if depth > 1 && !(file_type.is_symlink() && links_to_ancestor(&path)) {
+                pending.push((path.clone(), depth - 1));
+            }
+            out.push(path);
+        }
+    }
+}
+
+fn links_to_ancestor(path: &Path) -> bool {
+    let Ok(target) = path.canonicalize() else {
+        return true;
+    };
+    path.ancestors().skip(1).any(|ancestor| {
+        ancestor
+            .canonicalize()
+            .is_ok_and(|ancestor| ancestor == target)
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -173,22 +198,17 @@ struct IgnoreRule {
 #[derive(Debug, Clone)]
 enum IgnoreKind {
     Component,
-    Path {
-        pattern: PathBuf,
-        absolute: bool,
-        anchored_to_root: bool,
-    },
+    Path { pattern: String, absolute: bool },
 }
 
 impl IgnoreRule {
     fn new(raw: &str) -> Self {
         let raw = raw.trim().to_string();
-        let is_path = raw.contains('/') || raw.starts_with('/') || raw.starts_with('~');
+        let is_path = raw.contains('/') || raw.starts_with('~');
         let kind = if is_path {
             IgnoreKind::Path {
                 absolute: raw.starts_with('/') || raw.starts_with('~'),
-                anchored_to_root: raw.starts_with('/'),
-                pattern: expand_ignore_path(&raw),
+                pattern: normalize_path(&expand_ignore_path(&raw)).into_owned(),
             }
         } else {
             IgnoreKind::Component
@@ -205,16 +225,12 @@ impl IgnoreRule {
                 let component = component.to_string_lossy();
                 wildcard_match(&self.raw, &component)
             }),
-            IgnoreKind::Path {
-                pattern,
-                absolute,
-                anchored_to_root,
-            } => {
+            IgnoreKind::Path { pattern, absolute } => {
                 if *absolute {
-                    path_prefix_matches(path, pattern)
+                    path_prefix_matches(&normalize_path(path), pattern)
                 } else {
                     path.strip_prefix(root)
-                        .map(|relative| relative_path_matches(relative, pattern, *anchored_to_root))
+                        .map(|relative| relative_path_matches(&normalize_path(relative), pattern))
                         .unwrap_or(false)
                 }
             }
@@ -240,70 +256,47 @@ fn expand_ignore_path(raw: &str) -> PathBuf {
     PathBuf::from(raw)
 }
 
-fn path_prefix_matches(path: &Path, pattern: &Path) -> bool {
-    let path_s = normalize_path(path);
-    let pattern_s = normalize_path(pattern);
-    if !pattern_s.contains('*') {
-        return path_s == pattern_s
-            || path_s
-                .strip_prefix(&pattern_s)
+fn path_prefix_matches(path: &str, pattern: &str) -> bool {
+    if !pattern.contains('*') {
+        return path == pattern
+            || path
+                .strip_prefix(pattern)
                 .is_some_and(|rest| rest.starts_with('/'));
     }
-
-    for candidate in path_prefix_candidates(&path_s) {
-        if wildcard_match(&pattern_s, candidate) {
+    let mut candidate = path;
+    while !candidate.is_empty() {
+        if wildcard_match(pattern, candidate) {
             return true;
         }
+        let Some(index) = candidate.rfind('/') else {
+            break;
+        };
+        candidate = &candidate[..index];
     }
     false
 }
 
-fn relative_path_matches(path: &Path, pattern: &Path, anchored_to_root: bool) -> bool {
-    if anchored_to_root {
-        return path_prefix_matches(path, pattern);
-    }
-
-    let relative = normalize_path(path);
-    for candidate in path_suffix_candidates(&relative) {
-        if path_prefix_matches(Path::new(candidate), pattern) {
+fn relative_path_matches(path: &str, pattern: &str) -> bool {
+    let mut candidate = path;
+    while !candidate.is_empty() {
+        if path_prefix_matches(candidate, pattern) {
             return true;
         }
+        let Some((_, rest)) = candidate.split_once('/') else {
+            break;
+        };
+        candidate = rest;
     }
-
     false
 }
 
-fn normalize_path(path: &Path) -> String {
-    path.to_string_lossy().replace('\\', "/")
-}
-
-fn path_prefix_candidates(path: &str) -> Vec<&str> {
-    let mut candidates = Vec::new();
-    let mut end = path.len();
-    loop {
-        let candidate = &path[..end];
-        if !candidate.is_empty() {
-            candidates.push(candidate);
-        }
-        match candidate.rfind('/') {
-            Some(index) => end = index,
-            None => break,
-        }
+fn normalize_path(path: &Path) -> Cow<'_, str> {
+    let path = path.to_string_lossy();
+    if path.contains('\\') {
+        Cow::Owned(path.replace('\\', "/"))
+    } else {
+        path
     }
-    candidates
-}
-
-fn path_suffix_candidates(path: &str) -> Vec<&str> {
-    let mut candidates = Vec::new();
-    if !path.is_empty() {
-        candidates.push(path);
-    }
-    for (index, ch) in path.char_indices() {
-        if ch == '/' && index + 1 < path.len() {
-            candidates.push(&path[index + 1..]);
-        }
-    }
-    candidates
 }
 
 fn wildcard_match(pattern: &str, text: &str) -> bool {
