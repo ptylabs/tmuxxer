@@ -241,22 +241,17 @@ fn detect_parent_shell() -> Option<Shell> {
 
 #[cfg(target_os = "macos")]
 fn detect_parent_shell() -> Option<Shell> {
+    use std::os::unix::process::parent_id;
     use std::process::Command;
 
-    unsafe extern "C" {
-        fn getppid() -> i32;
-    }
-
-    let parent = unsafe { getppid() };
     let output = Command::new("ps")
-        .args(["-p", &parent.to_string(), "-o", "comm="])
+        .args(["-p", &parent_id().to_string(), "-o", "comm="])
         .output()
         .ok()?;
-    output
-        .status
-        .success()
-        .then(|| Shell::from_path(&String::from_utf8_lossy(&output.stdout)))
-        .flatten()
+    if !output.status.success() {
+        return None;
+    }
+    Shell::from_path(&String::from_utf8_lossy(&output.stdout))
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
