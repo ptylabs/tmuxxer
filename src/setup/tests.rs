@@ -100,7 +100,10 @@ fn normalize_ignore_cli_input_expands_dot_to_stored_path() {
 
     let stored = normalize_ignore_cli_input(dir.path(), ".").unwrap();
 
-    assert_eq!(stored, config::stored_path(dir.path()));
+    assert_eq!(
+        stored,
+        config::stored_path(&dir.path().canonicalize().unwrap())
+    );
 }
 
 #[test]

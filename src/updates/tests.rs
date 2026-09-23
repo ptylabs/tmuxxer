@@ -3,6 +3,16 @@ use crate::test_support::TempDir;
 use std::fs;
 
 #[test]
+fn selects_native_macos_release_targets() {
+    assert_eq!(target_for("macos", "aarch64"), Some("aarch64-apple-darwin"));
+    assert_eq!(target_for("macos", "x86_64"), Some("x86_64-apple-darwin"));
+    assert_eq!(
+        target_for("linux", "aarch64"),
+        Some("aarch64-unknown-linux-gnu")
+    );
+}
+
+#[test]
 fn parses_update_state() {
     let state = parse_state(
         "last_check_at = 42\n\
