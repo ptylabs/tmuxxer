@@ -99,8 +99,14 @@ detect_target() {
         Linux/*)
             fail "unsupported Linux architecture '$arch' (supported: x86_64, aarch64)"
             ;;
+        Darwin/arm64 | Darwin/aarch64)
+            printf '%s\n' "aarch64-apple-darwin"
+            ;;
+        Darwin/x86_64 | Darwin/amd64)
+            printf '%s\n' "x86_64-apple-darwin"
+            ;;
         Darwin/*)
-            fail "macOS is not supported by this installer yet; build from source with Cargo"
+            fail "unsupported macOS architecture '$arch' (supported: arm64, x86_64)"
             ;;
         *)
             fail "unsupported operating system '$os'"

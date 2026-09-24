@@ -228,6 +228,7 @@ fn display_user_path(path: &Path) -> String {
     path.display().to_string()
 }
 
+#[cfg(target_os = "linux")]
 fn detect_parent_shell() -> Option<Shell> {
     let status = fs::read_to_string("/proc/self/status").ok()?;
     let ppid = status.lines().find_map(|line| {
@@ -236,6 +237,26 @@ fn detect_parent_shell() -> Option<Shell> {
     })?;
     let command = fs::read_to_string(format!("/proc/{ppid}/comm")).ok()?;
     Shell::from_path(command.trim())
+}
+
+#[cfg(target_os = "macos")]
+fn detect_parent_shell() -> Option<Shell> {
+    use std::os::unix::process::parent_id;
+    use std::process::Command;
+
+    let output = Command::new("ps")
+        .args(["-p", &parent_id().to_string(), "-o", "comm="])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Shell::from_path(&String::from_utf8_lossy(&output.stdout))
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn detect_parent_shell() -> Option<Shell> {
+    None
 }
 
 #[cfg(test)]

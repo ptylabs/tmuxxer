@@ -24,6 +24,12 @@ Inspired by [tmux-sessionizer](https://github.com/theprimeagen/tmux-sessionizer)
 - [tmux](https://github.com/tmux/tmux) installed
 - [fzf](https://github.com/junegunn/fzf) installed
 
+On macOS, install both with Homebrew:
+
+```bash
+brew install tmux fzf
+```
+
 > **Note:** Docker is optional. When Docker is available and enabled in config, running containers can appear in the picker. Rust is only required when building from source.
 
 ## Install
@@ -34,13 +40,15 @@ Install and compile from crates.io:
 cargo install tmuxxer
 ```
 
-Or curl to install the binary: 
+Or install a prebuilt binary on Linux, Apple Silicon macOS, or Intel macOS:
 
 ```bash
 curl -fsSL https://ptylabs.github.io/tmuxxer/install.sh | sh
 ```
 
 [View installation script here](https://raw.githubusercontent.com/ptylabs/tmuxxer/main/docs/install.sh)
+
+The prebuilt macOS binaries become available with the next release containing these changes. Until then, use `cargo install tmuxxer` on macOS.
 
 Permanent key binding setup through `tmuxxer init` or `tmuxxer user-config` requires an installed executable on `PATH`; Cargo build artifacts such as `target/debug/tmuxxer` are intentionally not written into dotfiles.
 
@@ -88,3 +96,5 @@ tmuxxer-{version}-sha256sums.txt
 
 - `x86_64-unknown-linux-gnu`
 - `aarch64-unknown-linux-gnu`
+- `aarch64-apple-darwin`
+- `x86_64-apple-darwin`

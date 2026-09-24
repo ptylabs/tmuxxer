@@ -368,7 +368,7 @@ fn update_script_binary(release: &LatestRelease, exe: &Path) -> io::Result<()> {
     let target = release_target().ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::Unsupported,
-            "automatic binary updates are only supported for Linux x86_64, aarch64, and armv7",
+            "automatic binary updates are only supported for Linux x86_64/aarch64/armv7 and macOS Apple Silicon/Intel",
         )
     })?;
     let asset = find_release_asset(release, target).ok_or_else(|| {
@@ -442,10 +442,16 @@ fn find_checksum_asset(release: &LatestRelease) -> Option<&ReleaseAsset> {
 }
 
 fn release_target() -> Option<&'static str> {
-    match (env::consts::OS, env::consts::ARCH) {
+    target_for(env::consts::OS, env::consts::ARCH)
+}
+
+fn target_for(os: &str, arch: &str) -> Option<&'static str> {
+    match (os, arch) {
         ("linux", "x86_64") => Some("x86_64-unknown-linux-gnu"),
         ("linux", "aarch64") => Some("aarch64-unknown-linux-gnu"),
         ("linux", "arm") => Some("armv7-unknown-linux-gnueabihf"),
+        ("macos", "aarch64") => Some("aarch64-apple-darwin"),
+        ("macos", "x86_64") => Some("x86_64-apple-darwin"),
         _ => None,
     }
 }
