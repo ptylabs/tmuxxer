@@ -1,6 +1,6 @@
-# 🦀 tmuxxer
+# tmuxxer
 
-**Sessionize everything. Ctrl+f into your folders, dockers, sessions...**
+Switch between project folders, tmux sessions, and running Docker containers with `Ctrl+f`.
 
 <p align="center">
   <a href="https://crates.io/crates/tmuxxer">
@@ -15,20 +15,18 @@
   <sub>Made with ❤️ by <a href="https://github.com/ptylabs">ptylabs</a></sub>
 </p>
 
-`tmuxxer` is a sessionizer that combines configured project folders, live tmux sessions, and more in one `fzf` picker. The idea is to give the binding `Ctrl+f` the power to jump into every project you need within milliseconds.
+`tmuxxer` combines configured project folders, live tmux sessions, and running containers in one `fzf` picker.
 
-Inspired by [tmux-sessionizer](https://github.com/theprimeagen/tmux-sessionizer) and intended to give it batteries.
+Inspired by [tmux-sessionizer](https://github.com/theprimeagen/tmux-sessionizer).
 
 ## Requirements
 
 - [tmux](https://github.com/tmux/tmux) installed
 - [fzf](https://github.com/junegunn/fzf) installed
 
-Those are usually installed by default.
-
 > **Note:** Docker is optional. When Docker is available and enabled in config, running containers can appear in the picker. Rust is only required when building from source.
 
-## 📦 Install
+## Install
 
 Install and compile from crates.io:
 
@@ -48,7 +46,7 @@ Permanent key binding setup through `tmuxxer init` or `tmuxxer user-config` requ
 
 ## Usage
 
-The proposed way to use is to run `tmuxxer init` and setup bindings for your shell and tmux. After sourcing your shell config or restarting your terminal, you should be able to just press `Ctrl+f` and look for your project.
+Run `tmuxxer init` to set up bindings for your shell and tmux. Source your shell config or restart your terminal, then press `Ctrl+f` to choose a project.
 
 Basic usage commands:
 
@@ -61,9 +59,9 @@ tmuxxer --add        # Add a project to the fuzzy finder
 tmuxxer --ignore     # Ignore a project from the fuzzy finder
 ```
 
-Please refer to the documentation for additional usage.
+See [performance notes](docs/performance.md) for build settings and a reproducible benchmark.
 
-## 👀 What you'll see when fuzzy finding
+## What you'll see when fuzzy finding
 
 - `[session] name` attaches or switches to an existing tmux session.
 - `[docker] name - image (id)` opens a shell inside a running container when Docker entries are enabled.
@@ -71,13 +69,13 @@ Please refer to the documentation for additional usage.
 
 Inside tmux, selected directory sessions use `tmux switch-client`. Outside tmux, tmuxxer creates or attaches to the target session.
 
-## ⚙️ Configuration
+## Configuration
 
 Config lives at `$XDG_CONFIG_HOME/tmuxxer/config`, or `~/.config/tmuxxer/config` when `XDG_CONFIG_HOME` is not set.
 
 See [docs/config.md](docs/config.md) for every supported config flag, valid values, defaults, and migration notes.
 
-## 🏷️ Release Assets
+## Release Assets
 
 The install script and `tmuxxer update` both consume GitHub Release assets named:
 
