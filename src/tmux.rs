@@ -1,6 +1,6 @@
 use std::env;
-use std::fs::File;
 use std::io::{self, IsTerminal};
+use std::os::fd::AsFd;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use thiserror::Error;
@@ -165,12 +165,16 @@ impl TmuxCommand for SystemTmux {
 }
 
 fn connect_terminal_input(cmd: &mut Command) -> io::Result<()> {
-    // ZLE disconnects widget stdin; tmux needs terminal input to attach a client.
-    if !io::stdin().is_terminal() {
-        let tty = File::open("/dev/tty").map_err(|err| {
-            io::Error::new(err.kind(), format!("cannot open terminal for tmux: {err}"))
-        })?;
-        cmd.stdin(Stdio::from(tty));
+    // ZLE disconnects stdin. Duplicate a real terminal descriptor instead of
+    // opening /dev/tty, which tmux explicitly rejects as a client terminal.
+    if io::stdout().is_terminal() {
+        cmd.stdin(Stdio::from(io::stdout().as_fd().try_clone_to_owned()?));
+    } else if io::stderr().is_terminal() {
+        cmd.stdin(Stdio::from(io::stderr().as_fd().try_clone_to_owned()?));
+    } else if !io::stdin().is_terminal() {
+        return Err(io::Error::other(
+            "tmux requires a terminal to attach a client",
+        ));
     }
     Ok(())
 }

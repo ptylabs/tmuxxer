@@ -102,6 +102,6 @@ tmuxxer-{version}-sha256sums.txt
 ### Terminal input in shell widgets
 
 When invoked from a Zsh widget (ZLE) or with redirected stdin, tmuxxer
-reconnects tmux's input to `/dev/tty` before creating an attached session or
+reconnects tmux's input using an existing terminal output descriptor before creating an attached session or
 attaching to an existing one. A controlling terminal is required for these
 operations. Detached sessions and switching clients do not require this redirection.
