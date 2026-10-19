@@ -1,5 +1,6 @@
 use std::env;
-use std::io;
+use std::fs::File;
+use std::io::{self, IsTerminal};
 use std::path::Path;
 use std::process::{Command, Stdio};
 use thiserror::Error;
@@ -93,6 +94,9 @@ impl TmuxCommand for SystemTmux {
             cmd.arg("-d");
         }
         cmd.args(["-s", name, "-c", dir.as_ref()]);
+        if !detached {
+            connect_terminal_input(&mut cmd)?;
+        }
         let status = cmd.status()?;
         if status.success() {
             Ok(())
@@ -116,6 +120,9 @@ impl TmuxCommand for SystemTmux {
             cmd.arg("-d");
         }
         cmd.args(["-s", name, command]);
+        if !detached {
+            connect_terminal_input(&mut cmd)?;
+        }
         let status = cmd.status()?;
         if status.success() {
             Ok(())
@@ -142,7 +149,10 @@ impl TmuxCommand for SystemTmux {
     }
 
     fn attach(&self, name: &str) -> Result<(), TmuxError> {
-        let status = Command::new("tmux").args(["attach", "-t", name]).status()?;
+        let mut cmd = Command::new("tmux");
+        cmd.args(["attach", "-t", name]);
+        connect_terminal_input(&mut cmd)?;
+        let status = cmd.status()?;
         if status.success() {
             Ok(())
         } else {
@@ -152,4 +162,15 @@ impl TmuxCommand for SystemTmux {
             })
         }
     }
+}
+
+fn connect_terminal_input(cmd: &mut Command) -> io::Result<()> {
+    // ZLE disconnects widget stdin; tmux needs terminal input to attach a client.
+    if !io::stdin().is_terminal() {
+        let tty = File::open("/dev/tty").map_err(|err| {
+            io::Error::new(err.kind(), format!("cannot open terminal for tmux: {err}"))
+        })?;
+        cmd.stdin(Stdio::from(tty));
+    }
+    Ok(())
 }
